@@ -1,12 +1,13 @@
-# rev 15.1.1
-# rev anterior: rev 15.1.0
+# rev 15.1.3
+# rev anterior: rev 15.1.2
 # Changelog:
-#   15.1.1 — Corrección bug FM_HABILITADO=False: con FM apagado, ffmpeg ahora
-#            lee PCM raw directamente desde stdin (-f s16le) sin pasar por sox,
-#            eliminando la ambigüedad del header WAV en el pipeline.
-#            pkill de ffmpeg corregido a sudo pkill para matar procesos
-#            lanzados como root. Añadida pausa de 1s tras pkill para que
-#            el SO libere el puerto de Icecast antes de reconectar.
+#   15.1.2 — Corrección bug de silencio entre pistas en modo sin FM:
+#            sox se restaura como buffer de entrada en el pipeline sin FM
+#            (sox PCM→WAV | ffmpeg→Icecast). El buffer interno de sox
+#            suaviza las transiciones entre pistas y evita underruns
+#            en ffmpeg al cambiar de archivo.
+#   15.1.1 — pkill ffmpeg corregido a sudo pkill. Pausa 1s post-pkill.
+#            Modo sin FM: ffmpeg leía PCM raw directo (revertido en 15.1.2).
 #   15.1.0 — Anotaciones de tipo migradas a Optional de typing
 #            para compatibilidad con Python 3.9 (Raspberry Pi OS).
 #   15.0.0 — Extracción del motor de audio a módulo independiente.
@@ -82,21 +83,24 @@ def _construir_comando_stream():
     else:
         # -------------------------------------------------------
         # Modo solo Icecast (sin FM):
-        #   ffmpeg lee PCM raw directamente desde stdin, sin sox
-        #   de por medio. Elimina la ambigüedad del header WAV y
-        #   simplifica el pipeline a un único proceso.
+        #   sox actúa como buffer de entrada (PCM raw → WAV stdout)
+        #   ffmpeg toma el WAV y publica en Icecast.
+        #   El buffer interno de sox (~32KB por defecto) suaviza
+        #   las transiciones entre pistas y evita underruns en
+        #   ffmpeg cuando el DJ cambia de archivo.
         # -------------------------------------------------------
-        return (
-            "ffmpeg -hide_banner -loglevel error "
-            "-f s16le -ar {rate} -ac 1 -i - "
-            "-c:a libmp3lame -b:a {bitrate}k "
-            "-ac 1 -content_type audio/mpeg -f mp3 "
-            "{url}".format(
-                rate=config.SAMPLE_RATE,
-                bitrate=config.ICECAST_BITRATE_K,
-                url=icecast_url,
+        sox_buffer = (
+            "sox -t raw -r {rate} -e signed -b 16 -c 1 - -t wav -".format(
+                rate=config.SAMPLE_RATE
             )
         )
+        ffmpeg_desde_wav = (
+            "ffmpeg -hide_banner -loglevel error -i - "
+            "-c:a libmp3lame -b:a {bitrate}k "
+            "-ac 1 -content_type audio/mpeg -f mp3 "
+            "{url}".format(bitrate=config.ICECAST_BITRATE_K, url=icecast_url)
+        )
+        return "{sox} | {ffmpeg}".format(sox=sox_buffer, ffmpeg=ffmpeg_desde_wav)
 
 
 # ==========================================
@@ -149,9 +153,12 @@ def iniciar_o_reiniciar_stream():
 
 def transmitir_silencio(segundos, es_espera=False):
     """
-    Inyecta muestras de silencio PCM al stream durante los segundos indicados.
+    Inyecta muestras de silencio PCM al stream durante los segundos indicados
+    respetando el tempo real mediante rate-limiting explícito.
     Se interrumpe si cambia el modo (espera <-> transmisión normal).
     """
+    import time as _time
+
     try:
         frames_totales  = int(config.SAMPLE_RATE * segundos)
         chunk           = config.SAMPLE_RATE // 2   # bloques de 0.5 s
@@ -163,10 +170,18 @@ def transmitir_silencio(segundos, es_espera=False):
             if es_espera and not estado.actualizando_clima:
                 break
 
+            t_inicio          = _time.monotonic()
             frames_a_escribir = min(chunk, frames_totales - frames_escritos)
             estado.flujo_radio.stdin.write(b"\x00" * (frames_a_escribir * 2))
             estado.flujo_radio.stdin.flush()
-            frames_escritos += frames_a_escribir
+            frames_escritos  += frames_a_escribir
+
+            # Rate-limiting: respetar el tempo real del silencio
+            duracion_chunk = frames_a_escribir / config.SAMPLE_RATE
+            transcurrido   = _time.monotonic() - t_inicio
+            pausa          = duracion_chunk - transcurrido
+            if pausa > 0:
+                _time.sleep(pausa)
 
     except Exception as e:
         if _es_broken_pipe(e):
@@ -182,10 +197,20 @@ def transmitir_silencio(segundos, es_espera=False):
 
 def inyectar_audio_al_stream(ruta_archivo, es_espera=False):
     """
-    Lee un archivo WAV y escribe sus frames PCM al stdin del stream.
+    Lee un archivo WAV y escribe sus frames PCM al stdin del stream
+    respetando el tempo real del audio mediante rate-limiting explícito.
+
+    Sin rate-limiting, Python escribe todos los frames al pipe del SO
+    en microsegundos (I/O de memoria), lo que hace que sox/ffmpeg los
+    consuman y transmitan a velocidad descontrolada. El rate-limiting
+    garantiza que cada chunk de audio se escribe aproximadamente en el
+    tiempo que le correspondería reproducirse en tiempo real.
+
     Se interrumpe si cambia el modo (espera <-> transmisión normal).
     Gestiona Broken Pipe con auto-recuperación.
     """
+    import time as _time
+
     if not os.path.exists(ruta_archivo):
         print(f"[DJ] - {estado.ts()} ⚠️  Archivo no encontrado: {ruta_archivo}")
         transmitir_silencio(2)
@@ -193,19 +218,33 @@ def inyectar_audio_al_stream(ruta_archivo, es_espera=False):
 
     try:
         with wave.open(ruta_archivo, "rb") as w:
-            chunk = config.SAMPLE_RATE // 2   # bloques de 0.5 s
+            framerate = w.getframerate()   # sample rate real del archivo
+            ncanales  = w.getnchannels()
+            sampwidth = w.getsampwidth()
+            chunk     = framerate // 2     # bloques de 0.5 s en la frecuencia real del archivo
+
             while True:
                 if not es_espera and estado.actualizando_clima:
                     break
                 if es_espera and not estado.actualizando_clima:
                     break
 
+                t_inicio = _time.monotonic()
                 pcm_data = w.readframes(chunk)
                 if not pcm_data:
                     break
 
                 estado.flujo_radio.stdin.write(pcm_data)
                 estado.flujo_radio.stdin.flush()
+
+                # Calcular cuánto tiempo debería haber durado este chunk
+                # frames_leidos = bytes / (canales * bytes_por_muestra)
+                frames_leidos   = len(pcm_data) // (ncanales * sampwidth)
+                duracion_chunk  = frames_leidos / framerate
+                transcurrido    = _time.monotonic() - t_inicio
+                pausa           = duracion_chunk - transcurrido
+                if pausa > 0:
+                    _time.sleep(pausa)
 
     except Exception as e:
         if _es_broken_pipe(e):

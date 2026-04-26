@@ -23,7 +23,7 @@ from bd import _sanitizar_error
 def _generar_groq(prompt):
     # type: (str) -> Tuple[Optional[str], str, Optional[str]]
     """
-    Genera el guion vía Groq (qwen/qwen3-32b, razonamiento desactivado).
+    Genera el guion vía Groq con el modelo especificado. 
     Retorna (texto_guion, modelo_usado, mensaje_error).
     """
     url     = "https://api.groq.com/openai/v1/chat/completions"
@@ -38,7 +38,6 @@ def _generar_groq(prompt):
         "max_completion_tokens": 4096,
         "top_p":                 0.95,
         "stream":                False,
-        "reasoning_effort":      "none",
         "stop":                  None,
     }
     try:
