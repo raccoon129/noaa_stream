@@ -1,6 +1,8 @@
-# rev 15.1.0
-# rev anterior: rev 15.0.0
+# rev 15.1.3
+# rev anterior: rev 15.1.0
 # Changelog:
+#   15.1.3 — Se lanza el watchdog de dj.py al arrancar la estación para
+#            detectar y recuperar caídas silenciosas del pipeline de audio.
 #   15.1.0 — Se pasa el dict forecast a construir_prompt para integrar
 #            los datos del pronóstico horario de Open-Meteo en el guion.
 #   15.0.0 — Refactorización modular completa. Este archivo es el único punto
@@ -301,6 +303,9 @@ def iniciar_estacion():
 
     # Inicializar el pipeline de audio
     dj.iniciar_o_reiniciar_stream()
+
+    # Lanzar watchdog que detecta y recupera caídas silenciosas del pipeline
+    dj.iniciar_watchdog(intervalo=15)
 
     # Pregunta de arranque interactivo
     ejecutar_ahora = preguntar_arranque_inicial()

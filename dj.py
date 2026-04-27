@@ -1,6 +1,9 @@
 # rev 15.1.3
 # rev anterior: rev 15.1.2
 # Changelog:
+#   15.1.3 — Añadido hilo watchdog que detecta caída silenciosa del pipeline
+#            (ffmpeg/sox mueren sin lanzar excepción en Python) y lo
+#            reinicia automáticamente. Intervalo de comprobación: 15s.
 #   15.1.2 — Corrección bug de silencio entre pistas en modo sin FM:
 #            sox se restaura como buffer de entrada en el pipeline sin FM
 #            (sox PCM→WAV | ffmpeg→Icecast). El buffer interno de sox
@@ -16,6 +19,8 @@ import glob
 import os
 import random
 import subprocess
+import threading
+import time
 import wave
 from typing import Optional
 
@@ -132,8 +137,7 @@ def iniciar_o_reiniciar_stream():
 
     # Pausa breve para que el SO libere el puerto de Icecast antes de
     # que ffmpeg intente reconectarse
-    import time as _time
-    _time.sleep(1)
+    time.sleep(1)
 
     comando = _construir_comando_stream()
 
@@ -157,8 +161,6 @@ def transmitir_silencio(segundos, es_espera=False):
     respetando el tempo real mediante rate-limiting explícito.
     Se interrumpe si cambia el modo (espera <-> transmisión normal).
     """
-    import time as _time
-
     try:
         frames_totales  = int(config.SAMPLE_RATE * segundos)
         chunk           = config.SAMPLE_RATE // 2   # bloques de 0.5 s
@@ -170,7 +172,7 @@ def transmitir_silencio(segundos, es_espera=False):
             if es_espera and not estado.actualizando_clima:
                 break
 
-            t_inicio          = _time.monotonic()
+            t_inicio          = time.monotonic()
             frames_a_escribir = min(chunk, frames_totales - frames_escritos)
             estado.flujo_radio.stdin.write(b"\x00" * (frames_a_escribir * 2))
             estado.flujo_radio.stdin.flush()
@@ -178,10 +180,10 @@ def transmitir_silencio(segundos, es_espera=False):
 
             # Rate-limiting: respetar el tempo real del silencio
             duracion_chunk = frames_a_escribir / config.SAMPLE_RATE
-            transcurrido   = _time.monotonic() - t_inicio
+            transcurrido   = time.monotonic() - t_inicio
             pausa          = duracion_chunk - transcurrido
             if pausa > 0:
-                _time.sleep(pausa)
+                time.sleep(pausa)
 
     except Exception as e:
         if _es_broken_pipe(e):
@@ -209,8 +211,6 @@ def inyectar_audio_al_stream(ruta_archivo, es_espera=False):
     Se interrumpe si cambia el modo (espera <-> transmisión normal).
     Gestiona Broken Pipe con auto-recuperación.
     """
-    import time as _time
-
     if not os.path.exists(ruta_archivo):
         print(f"[DJ] - {estado.ts()} ⚠️  Archivo no encontrado: {ruta_archivo}")
         transmitir_silencio(2)
@@ -229,7 +229,7 @@ def inyectar_audio_al_stream(ruta_archivo, es_espera=False):
                 if es_espera and not estado.actualizando_clima:
                     break
 
-                t_inicio = _time.monotonic()
+                t_inicio = time.monotonic()
                 pcm_data = w.readframes(chunk)
                 if not pcm_data:
                     break
@@ -241,10 +241,10 @@ def inyectar_audio_al_stream(ruta_archivo, es_espera=False):
                 # frames_leidos = bytes / (canales * bytes_por_muestra)
                 frames_leidos   = len(pcm_data) // (ncanales * sampwidth)
                 duracion_chunk  = frames_leidos / framerate
-                transcurrido    = _time.monotonic() - t_inicio
+                transcurrido    = time.monotonic() - t_inicio
                 pausa           = duracion_chunk - transcurrido
                 if pausa > 0:
-                    _time.sleep(pausa)
+                    time.sleep(pausa)
 
     except Exception as e:
         if _es_broken_pipe(e):
@@ -256,6 +256,56 @@ def inyectar_audio_al_stream(ruta_archivo, es_espera=False):
         else:
             print(f"[DJ] - {estado.ts()} ⚠️  Error al inyectar {ruta_archivo}: {e}")
             transmitir_silencio(2)
+
+
+
+# ==========================================
+#   WATCHDOG DE PIPELINE
+# ==========================================
+
+def _watchdog_stream(intervalo=15):
+    """
+    Hilo demonio que verifica cada `intervalo` segundos si el proceso
+    del pipeline de audio (flujo_radio) sigue activo.
+
+    Si detecta que el proceso terminó de forma inesperada (ffmpeg o sox
+    cayeron sin lanzar excepción en Python, por ejemplo por timeout de
+    Icecast o pérdida de red), llama a iniciar_o_reiniciar_stream()
+    para restablecer la transmisión automáticamente.
+
+    No actúa si actualizando_clima es True, ya que en ese estado
+    el pipeline puede estar en transición legítima.
+    """
+    while True:
+        time.sleep(intervalo)
+        try:
+            # poll() retorna None si el proceso sigue vivo,
+            # o el código de retorno si ya terminó
+            if estado.flujo_radio and estado.flujo_radio.poll() is not None:
+                if not estado.actualizando_clima:
+                    print(
+                        f"\n[WATCHDOG] - {estado.ts()} ⚠️  Pipeline caído "
+                        f"(código: {estado.flujo_radio.returncode}). "
+                        f"Reiniciando transmisión..."
+                    )
+                    iniciar_o_reiniciar_stream()
+        except Exception as e:
+            print(f"[WATCHDOG] - {estado.ts()} ⚠️  Error en watchdog: {e}")
+
+
+def iniciar_watchdog(intervalo=15):
+    """
+    Lanza el hilo watchdog como demonio.
+    Debe llamarse una sola vez desde noaa_str.py al arrancar la estación.
+    """
+    hilo = threading.Thread(
+        target=_watchdog_stream,
+        args=(intervalo,),
+        daemon=True,
+        name="watchdog-stream"
+    )
+    hilo.start()
+    print(f"[WATCHDOG] - {estado.ts()} ✅ Watchdog de pipeline iniciado (intervalo: {intervalo}s)")
 
 
 # ==========================================
