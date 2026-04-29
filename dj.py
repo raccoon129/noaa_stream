@@ -1,9 +1,13 @@
-# rev 15.1.3
-# rev anterior: rev 15.1.2
+# rev 15.1.4
+# rev anterior: rev 15.1.3
 # Changelog:
-#   15.1.3 — Añadido hilo watchdog que detecta caída silenciosa del pipeline
-#            (ffmpeg/sox mueren sin lanzar excepción en Python) y lo
-#            reinicia automáticamente. Intervalo de comprobación: 15s.
+#   15.1.4 — Watchdog reforzado: ahora verifica el mountpoint en Icecast via
+#            HTTP (/status-json.xsl) además de poll(). Detecta cuando ffmpeg
+#            muere internamente pero bash/sox siguen vivos. Requiere 2 fallos
+#            consecutivos antes de reiniciar (evita falsos positivos por red).
+#            ffmpeg ahora incluye -reconnect/-reconnect_streamed/-reconnect_delay_max
+#            para reconexión automática a Icecast sin reiniciar el pipeline.
+#   15.1.3 — Watchdog inicial con poll() solamente.
 #   15.1.2 — Corrección bug de silencio entre pistas en modo sin FM:
 #            sox se restaura como buffer de entrada en el pipeline sin FM
 #            (sox PCM→WAV | ffmpeg→Icecast). El buffer interno de sox
@@ -23,6 +27,10 @@ import threading
 import time
 import wave
 from typing import Optional
+try:
+    import urllib.request as _urllib
+except ImportError:
+    _urllib = None
 
 import config
 import estado
@@ -66,9 +74,11 @@ def _construir_comando_stream():
             )
         )
         ffmpeg_desde_wav = (
-            "ffmpeg -hide_banner -loglevel error -i - "
+            "ffmpeg -hide_banner -loglevel error "
+            "-re -i - "
             "-c:a libmp3lame -b:a {bitrate}k "
             "-ac 1 -content_type audio/mpeg -f mp3 "
+            "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5 "
             "{url}".format(bitrate=config.ICECAST_BITRATE_K, url=icecast_url)
         )
         fm_cmd = (
@@ -100,9 +110,11 @@ def _construir_comando_stream():
             )
         )
         ffmpeg_desde_wav = (
-            "ffmpeg -hide_banner -loglevel error -i - "
+            "ffmpeg -hide_banner -loglevel error "
+            "-re -i - "
             "-c:a libmp3lame -b:a {bitrate}k "
             "-ac 1 -content_type audio/mpeg -f mp3 "
+            "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5 "
             "{url}".format(bitrate=config.ICECAST_BITRATE_K, url=icecast_url)
         )
         return "{sox} | {ffmpeg}".format(sox=sox_buffer, ffmpeg=ffmpeg_desde_wav)
@@ -263,32 +275,83 @@ def inyectar_audio_al_stream(ruta_archivo, es_espera=False):
 #   WATCHDOG DE PIPELINE
 # ==========================================
 
+def _icecast_stream_activo():
+    """
+    Consulta el endpoint JSON de estado de Icecast para verificar si el
+    mountpoint configurado tiene oyentes o al menos está montado y activo.
+
+    Retorna True si el mountpoint responde correctamente, False si no
+    aparece en el estado de Icecast o si Icecast no responde.
+    Este chequeo es más fiable que poll() porque detecta cuando ffmpeg
+    muere internamente pero bash/sox siguen vivos.
+    """
+    if _urllib is None:
+        return True  # Sin urllib no podemos verificar; asumir activo
+
+    url = "http://{host}:{port}/status-json.xsl".format(
+        host=config.ICECAST_HOST,
+        port=config.ICECAST_PORT,
+    )
+    try:
+        req = _urllib.urlopen(url, timeout=5)
+        datos = req.read().decode("utf-8", errors="ignore")
+        # El mountpoint configurado debe aparecer en la respuesta JSON
+        return config.ICECAST_MOUNTPOINT in datos
+    except Exception:
+        # Icecast no responde en absoluto — también es fallo
+        return False
+
+
 def _watchdog_stream(intervalo=15):
     """
-    Hilo demonio que verifica cada `intervalo` segundos si el proceso
-    del pipeline de audio (flujo_radio) sigue activo.
+    Hilo demonio que verifica cada `intervalo` segundos la salud real
+    del pipeline de audio usando dos estrategias complementarias:
 
-    Si detecta que el proceso terminó de forma inesperada (ffmpeg o sox
-    cayeron sin lanzar excepción en Python, por ejemplo por timeout de
-    Icecast o pérdida de red), llama a iniciar_o_reiniciar_stream()
-    para restablecer la transmisión automáticamente.
+    1. poll() sobre flujo_radio: detecta si el proceso bash padre cayó.
+    2. Consulta HTTP al endpoint de estado de Icecast: detecta cuando
+       ffmpeg murió internamente pero bash/sox siguen vivos, o cuando
+       la conexión a Icecast se cortó silenciosamente.
 
-    No actúa si actualizando_clima es True, ya que en ese estado
-    el pipeline puede estar en transición legítima.
+    Si cualquiera de las dos falla, reinicia el pipeline completo.
+    No actúa mientras actualizando_clima sea True.
     """
+    # Espera inicial para dejar que el pipeline arranque antes del primer chequeo
+    time.sleep(intervalo * 2)
+
+    fallos_consecutivos = 0
+    MAX_FALLOS = 2   # Reiniciar solo si falla N veces seguidas (evita falsos positivos)
+
     while True:
         time.sleep(intervalo)
+        if estado.actualizando_clima:
+            fallos_consecutivos = 0
+            continue
+
         try:
-            # poll() retorna None si el proceso sigue vivo,
-            # o el código de retorno si ya terminó
-            if estado.flujo_radio and estado.flujo_radio.poll() is not None:
-                if not estado.actualizando_clima:
+            proceso_muerto = (
+                estado.flujo_radio is None
+                or estado.flujo_radio.poll() is not None
+            )
+            stream_caido = not _icecast_stream_activo()
+
+            if proceso_muerto or stream_caido:
+                fallos_consecutivos += 1
+                causa = "proceso muerto" if proceso_muerto else "stream Icecast inactivo"
+                print(
+                    f"[WATCHDOG] - {estado.ts()} ⚠️  Fallo detectado: {causa} "
+                    f"({fallos_consecutivos}/{MAX_FALLOS})"
+                )
+                if fallos_consecutivos >= MAX_FALLOS:
                     print(
-                        f"\n[WATCHDOG] - {estado.ts()} ⚠️  Pipeline caído "
-                        f"(código: {estado.flujo_radio.returncode}). "
-                        f"Reiniciando transmisión..."
+                        f"\n[WATCHDOG] - {estado.ts()} 🔄 Reiniciando pipeline "
+                        f"tras {MAX_FALLOS} fallos consecutivos..."
                     )
                     iniciar_o_reiniciar_stream()
+                    fallos_consecutivos = 0
+            else:
+                # Stream saludable — resetear contador
+                fallos_consecutivos = 0
+
         except Exception as e:
             print(f"[WATCHDOG] - {estado.ts()} ⚠️  Error en watchdog: {e}")
 
