@@ -229,7 +229,7 @@ def construir_prompt(cna, owm, aqi, forecast=None):
 
     prompt = (
         "Eres el sistema automatizado de alerta meteorológica regional. "
-        "Escribe un reporte de radio muy detallado para {ciudad} y alrededores.\n\n"
+        "Escribe un reporte de radio muy detallado para {ciudad} y alrededores. Evita ser redundante en la redacción.\n\n"
         "{cna}\n\n"
         "{owm}\n\n"
         "FUENTE 3 (Open-Meteo - Salud Ambiental y Radiación):\n"
@@ -238,7 +238,7 @@ def construir_prompt(cna, owm, aqi, forecast=None):
         "REGLAS PARA LA REDACCIÓN (CRÍTICAS):\n"
         "1. Inicia con un saludo formal simple según la hora del día (buenos dias/tardes/noches).\n"
         "{regla_lluvia}\n"
-        "3. Menciona la sensación térmica junto a la temperatura actual para darle más valor al reporte.\n"
+        "3. Menciona la sensación térmica junto a la temperatura actual para darle más valor al reporte. Además Da interpretación del clima actual. \n"
         "4. Menciona la visibilidad solo si crees que es un dato relevante en este momento "
         "(niebla, lluvia, o si es menor a 10km).\n"
         "5. Menciona la hora del amanecer o atardecer si la hora actual de este reporte ({hora}) "

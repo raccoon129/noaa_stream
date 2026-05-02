@@ -1,6 +1,15 @@
-# rev 15.1.4
-# rev anterior: rev 15.1.3
+# rev 15.2.0
+# rev anterior: rev 15.1.4
 # Changelog:
+#   15.2.0 — Reemplazo de pi_fm_rds por salida de audio local vía Bluetooth.
+#            _construir_comando_stream() ahora soporta dos modos:
+#              BT_HABILITADO = True : tee bifurca el PCM crudo antes de sox.
+#                Rama BT: sox (PCM→PCM resampled) | aplay en bucle autónomo.
+#                Rama Icecast: sox (PCM→WAV) | ffmpeg → Icecast (idéntico al modo anterior).
+#                La bifurcación en PCM crudo permite que aplay se reinicie
+#                limpiamente tras desconexión BT sin depender del header WAV.
+#              BT_HABILITADO = False: pipeline idéntico al anterior (sin FM ni BT).
+#            iniciar_o_reiniciar_stream(): pkill pi_fm_rds reemplazado por pkill aplay.
 #   15.1.4 — Watchdog reforzado: ahora verifica el mountpoint en Icecast via
 #            HTTP (/status-json.xsl) además de poll(). Detecta cuando ffmpeg
 #            muere internamente pero bash/sox siguen vivos. Requiere 2 fallos
@@ -44,13 +53,26 @@ def _construir_comando_stream():
     """
     Construye el comando de pipeline de audio según la configuración.
 
-    Cuando FM_HABILITADO = True:
-        sox raw → tee → (pi_fm_rds FM local) + (ffmpeg → Icecast)
+    Cuando BT_HABILITADO = True:
+        El PCM crudo se bifurca con tee antes de cualquier conversión de formato,
+        lo que permite que cada rama tenga su propio sox independiente:
 
-    Cuando FM_HABILITADO = False:
-        sox raw → ffmpeg → Icecast   (sin bifurcación FM)
+        Rama BT (best-effort):
+            sox (PCM→PCM, resamplea si BT_SAMPLE_RATE_SALIDA != SAMPLE_RATE)
+            | while true; do aplay -t raw ...; sleep 2; done
+            El bucle while permite que aplay se reinicie automáticamente si el
+            transmisor FM BT se desconecta temporalmente. El formato explícito
+            (-t raw) elimina la dependencia del header WAV, por lo que cada
+            reinicio de aplay retoma el stream sin artefactos.
 
-    El pipeline siempre recibe PCM raw signed-16bit 22050Hz mono por stdin.
+        Rama Icecast:
+            sox (PCM→WAV) | ffmpeg → Icecast
+            Idéntica al modo sin BT; no se ve afectada por el estado del BT.
+
+    Cuando BT_HABILITADO = False:
+        sox raw → WAV → ffmpeg → Icecast   (sin bifurcación; idéntico al modo anterior)
+
+    El pipeline siempre recibe PCM raw signed-16bit mono a SAMPLE_RATE Hz por stdin.
     """
     icecast_url = (
         "icecast://{user}:{pwd}@{host}:{port}{mount}".format(
@@ -62,62 +84,71 @@ def _construir_comando_stream():
         )
     )
 
-    if config.FM_HABILITADO:
+    # Conversión PCM→WAV para la rama Icecast (buffer de sox suaviza transiciones)
+    sox_a_wav = (
+        "sox -t raw -r {rate} -e signed -b 16 -c 1 - -t wav -".format(
+            rate=config.SAMPLE_RATE
+        )
+    )
+    ffmpeg_a_icecast = (
+        "ffmpeg -hide_banner -loglevel error "
+        "-re -i - "
+        "-c:a libmp3lame -b:a {bitrate}k "
+        "-ac 1 -content_type audio/mpeg -f mp3 "
+        "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5 "
+        "{url}".format(bitrate=config.ICECAST_BITRATE_K, url=icecast_url)
+    )
+
+    if config.BT_HABILITADO:
         # -------------------------------------------------------
-        # Modo FM + Icecast:
-        #   sox convierte PCM raw → WAV en stdout
-        #   tee bifurca: una copia a pi_fm_rds, otra a ffmpeg → Icecast
+        # Modo BT + Icecast:
+        #   tee bifurca el PCM crudo (antes de sox) en dos ramas independientes.
+        #   La bifurcación en crudo evita que un reinicio de aplay necesite
+        #   el header WAV; sox de la rama BT entrega PCM con formato explícito.
         # -------------------------------------------------------
-        sox_raw_to_wav = (
-            "sox -t raw -r {rate} -e signed -b 16 -c 1 - -t wav -".format(
-                rate=config.SAMPLE_RATE
+
+        # sox de la rama BT: PCM→PCM (resamplea solo si el rate difiere)
+        sox_a_pcm_bt = (
+            "sox -t raw -r {sr_in} -e signed -b 16 -c 1 - "
+            "-t raw -r {sr_out} -e signed -b 16 -c 1 -".format(
+                sr_in=config.SAMPLE_RATE,
+                sr_out=config.BT_SAMPLE_RATE_SALIDA,
             )
         )
-        ffmpeg_desde_wav = (
-            "ffmpeg -hide_banner -loglevel error "
-            "-re -i - "
-            "-c:a libmp3lame -b:a {bitrate}k "
-            "-ac 1 -content_type audio/mpeg -f mp3 "
-            "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5 "
-            "{url}".format(bitrate=config.ICECAST_BITRATE_K, url=icecast_url)
+        # aplay con formato explícito: no depende del header WAV para iniciar
+        aplay_bt = (
+            "aplay -D {dispositivo} -t raw -f S16_LE -r {rate} -c 1".format(
+                dispositivo=config.BT_DISPOSITIVO,
+                rate=config.BT_SAMPLE_RATE_SALIDA,
+            )
         )
-        fm_cmd = (
-            "sudo {exe} -freq {freq} -audio - "
-            '-ps "{ps}" -rt "{rt}"'.format(
-                exe=config.FM_EJECUTABLE,
-                freq=config.FRECUENCIA_FM,
-                ps=config.FM_PS,
-                rt=config.FM_RT,
+        # Bucle de resiliencia: si el transmisor BT se desconecta, aplay
+        # se reinicia automáticamente cada 2 s sin afectar la rama Icecast
+        rama_bt = (
+            "{sox_bt} | while true; do {aplay}; sleep 2; done".format(
+                sox_bt=sox_a_pcm_bt,
+                aplay=aplay_bt,
             )
         )
         return (
-            "{sox} | "
-            "tee >({fm}) | "
-            "{ffmpeg}".format(sox=sox_raw_to_wav, fm=fm_cmd, ffmpeg=ffmpeg_desde_wav)
+            "tee >({rama_bt}) | "
+            "{sox_wav} | "
+            "{ffmpeg}".format(
+                rama_bt=rama_bt,
+                sox_wav=sox_a_wav,
+                ffmpeg=ffmpeg_a_icecast,
+            )
         )
     else:
         # -------------------------------------------------------
-        # Modo solo Icecast (sin FM):
-        #   sox actúa como buffer de entrada (PCM raw → WAV stdout)
+        # Modo solo Icecast (sin BT):
+        #   sox actúa como buffer de entrada (PCM raw → WAV stdout).
         #   ffmpeg toma el WAV y publica en Icecast.
         #   El buffer interno de sox (~32KB por defecto) suaviza
         #   las transiciones entre pistas y evita underruns en
         #   ffmpeg cuando el DJ cambia de archivo.
         # -------------------------------------------------------
-        sox_buffer = (
-            "sox -t raw -r {rate} -e signed -b 16 -c 1 - -t wav -".format(
-                rate=config.SAMPLE_RATE
-            )
-        )
-        ffmpeg_desde_wav = (
-            "ffmpeg -hide_banner -loglevel error "
-            "-re -i - "
-            "-c:a libmp3lame -b:a {bitrate}k "
-            "-ac 1 -content_type audio/mpeg -f mp3 "
-            "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5 "
-            "{url}".format(bitrate=config.ICECAST_BITRATE_K, url=icecast_url)
-        )
-        return "{sox} | {ffmpeg}".format(sox=sox_buffer, ffmpeg=ffmpeg_desde_wav)
+        return "{sox} | {ffmpeg}".format(sox=sox_a_wav, ffmpeg=ffmpeg_a_icecast)
 
 
 # ==========================================
@@ -143,8 +174,8 @@ def iniciar_o_reiniciar_stream():
     # Se usa sudo en ambos pkill porque el script se ejecuta como root
     # (sudo python3) y los procesos hijo heredan ese UID. Sin sudo,
     # pkill no puede señalar procesos root desde un contexto no root.
-    if config.FM_HABILITADO:
-        subprocess.run("sudo pkill -f pi_fm_rds", shell=True, stderr=subprocess.DEVNULL)
+    if config.BT_HABILITADO:
+        subprocess.run("sudo pkill -f aplay", shell=True, stderr=subprocess.DEVNULL)
     subprocess.run("sudo pkill -f ffmpeg", shell=True, stderr=subprocess.DEVNULL)
 
     # Pausa breve para que el SO libere el puerto de Icecast antes de

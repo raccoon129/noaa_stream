@@ -1,6 +1,8 @@
-# rev 15.1.3
-# rev anterior: rev 15.1.0
+# rev 15.1.4
+# rev anterior: rev 15.1.3
 # Changelog:
+#   15.1.4 — Banner de inicio actualizado: ya no referencia pi_fm_rds ni MHz.
+#            Muestra ciudad y estado de BT según config.BT_HABILITADO.
 #   15.1.3 — Se lanza el watchdog de dj.py al arrancar la estación para
 #            detectar y recuperar caídas silenciosas del pipeline de audio.
 #   15.1.0 — Se pasa el dict forecast a construir_prompt para integrar
@@ -293,8 +295,10 @@ def preguntar_arranque_inicial() -> bool:
 # ==========================================
 
 def iniciar_estacion():
+    salidas = f"Icecast + BT → {config.FRECUENCIA_FM} MHz" if config.BT_HABILITADO else "Icecast"
     print("=====================================================")
-    print(f" INICIANDO RADIO NOAA STREAM EN {config.FRECUENCIA_FM} MHz ")
+    print(f" INICIANDO RADIO NOAA STREAM — {config.CIUDAD}    ")
+    print(f" Salidas: {salidas}                               ")
     print("=====================================================")
 
     # Crear carpetas necesarias si no existen
