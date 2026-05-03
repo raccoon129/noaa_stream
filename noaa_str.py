@@ -1,8 +1,11 @@
-# rev 15.1.4
-# rev anterior: rev 15.1.3
+# rev 15.1.5
+# rev anterior: rev 15.1.4
 # Changelog:
-#   15.1.4 — Banner de inicio actualizado: ya no referencia pi_fm_rds ni MHz.
-#            Muestra ciudad y estado de BT según config.BT_HABILITADO.
+#   15.1.5 — datos_para_bd reestructurado para el esquema normalizado por fuente.
+#            Los campos cna_*/owm_*/aqm_* se reemplazan por sub-dicts "conagua",
+#            "owm" y "aqi" que bd.guardar_reporte_en_bd distribuye a sus tablas
+#            hijas (datos_conagua, datos_owm, datos_openmeteo). Ningún otro
+#            comportamiento fue modificado.
 #   15.1.3 — Se lanza el watchdog de dj.py al arrancar la estación para
 #            detectar y recuperar caídas silenciosas del pipeline de audio.
 #   15.1.0 — Se pasa el dict forecast a construir_prompt para integrar
@@ -117,55 +120,40 @@ def actualizar_audio_clima():
             )
 
         # --------------------------------------------------
-        # 7. Paquete de datos para MySQL
+        # 7. Paquete de datos para MySQL (esquema normalizado)
         # --------------------------------------------------
         datos_para_bd = {
-            # Metadatos
+            # Metadatos del reporte
             "fecha_reporte":      fecha_exacta,
             "hora_reporte":       hora_exacta,
             "timestamp_completo": f"{fecha_exacta} {hora_exacta}:00",
             "ciudad":             config.CIUDAD,
 
-            # CONAGUA
-            "cna_disponible":    1 if datos_conagua else 0,
-            "cna_condicion":     cna_hoy.get("condicion")    if cna_hoy else None,
-            "cna_temp_max":      cna_hoy.get("temp_max")     if cna_hoy else None,
-            "cna_temp_min":      cna_hoy.get("temp_min")     if cna_hoy else None,
-            "cna_prob_lluvia":   cna_hoy.get("prob_lluvia")  if cna_hoy else None,
-            "cna_precipitacion": cna_hoy.get("precipitacion")if cna_hoy else None,
-            "cna_viento":        cna_hoy.get("viento")       if cna_hoy else None,
-            "cna_dir_viento":    cna_hoy.get("dir_viento")   if cna_hoy else None,
-            "cna_rafagas":       cna_hoy.get("rafagas")      if cna_hoy else None,
-            "cna_man_condicion": cna_manana.get("condicion") if cna_manana else None,
-            "cna_man_temp_max":  cna_manana.get("temp_max")  if cna_manana else None,
-            "cna_man_temp_min":  cna_manana.get("temp_min")  if cna_manana else None,
-
-            # OWM
-            "owm_disponible":   1 if owm else 0,
-            "owm_temp_actual":  owm.get("temp")       if owm else None,
-            "owm_sensacion":    owm.get("feels")      if owm else None,
-            "owm_humedad":      owm.get("humedad")    if owm else None,
-            "owm_condicion":    owm.get("desc")       if owm else None,
-            "owm_visibilidad":  owm.get("visibilidad")if owm else None,
-            "owm_lluvia_1h":    owm.get("lluvia_1h")  if owm else None,
-            "owm_amanecer":     owm.get("amanecer")   if owm else None,
-            "owm_atardecer":    owm.get("atardecer")  if owm else None,
-
-            # Open-Meteo AQI
-            "aqm_disponible":   1 if aqi else 0,
-            "aqm_aqi":          aqi.get("aqi")   if aqi else None,
-            "aqm_pm10":         aqi.get("pm10")  if aqi else None,
-            "aqm_pm25":         aqi.get("pm25")  if aqi else None,
-            "aqm_uv_index":     aqi.get("uv")    if aqi else None,
-            "aqm_co":           aqi.get("co")    if aqi else None,
-            "aqm_no2":          aqi.get("no2")   if aqi else None,
-            "aqm_so2":          aqi.get("so2")   if aqi else None,
-            "aqm_ozono":        aqi.get("ozono") if aqi else None,
-
             # Guion IA
             "guion_texto":     texto_guion,
             "modelo_ia_usado": modelo_usado,
             "guion_generado":  1 if texto_guion else 0,
+
+            # Sub-dict CONAGUA: None si no respondió → bd.py no insertará en datos_conagua
+            "conagua": {
+                "condicion":     cna_hoy.get("condicion")     if cna_hoy else None,
+                "temp_max":      cna_hoy.get("temp_max")      if cna_hoy else None,
+                "temp_min":      cna_hoy.get("temp_min")      if cna_hoy else None,
+                "prob_lluvia":   cna_hoy.get("prob_lluvia")   if cna_hoy else None,
+                "precipitacion": cna_hoy.get("precipitacion") if cna_hoy else None,
+                "viento":        cna_hoy.get("viento")        if cna_hoy else None,
+                "dir_viento":    cna_hoy.get("dir_viento")    if cna_hoy else None,
+                "rafagas":       cna_hoy.get("rafagas")       if cna_hoy else None,
+                "man_condicion": cna_manana.get("condicion")  if cna_manana else None,
+                "man_temp_max":  cna_manana.get("temp_max")   if cna_manana else None,
+                "man_temp_min":  cna_manana.get("temp_min")   if cna_manana else None,
+            } if datos_conagua else None,
+
+            # Sub-dict OWM: None si no respondió → bd.py no insertará en datos_owm
+            "owm": owm,  # dict ya extraído por meteorologo._extraer_owm, o None
+
+            # Sub-dict Open-Meteo AQI: None si no respondió → bd.py no insertará en datos_openmeteo
+            "aqi": aqi,  # dict ya extraído por meteorologo._extraer_aqi, o None
         }
 
         # --------------------------------------------------

@@ -1,6 +1,16 @@
-# rev 15.0.0
-# rev anterior: monolito noaa_estable.py rev 14.9.2
+# rev 15.2.0
+# rev anterior: rev 15.1.0
 # Changelog:
+#   15.2.0 — Corrección: el INSERT principal de reportes_climatologicos ahora recibe
+#            un sub-dict plano en lugar del dict completo, evitando el error
+#            "Python 'dict' cannot be converted to a MySQL type" que se producía
+#            porque mysql.connector intentaba serializar las claves anidadas
+#            (conagua, owm, aqi) aunque no estuvieran en el SQL.
+#   15.1.0 — guardar_reporte_en_bd adaptado al esquema normalizado por fuente.
+#            La tabla madre (reportes_climatologicos) recibe solo metadatos y guion.
+#            Los datos meteorológicos se insertan condicionalmente en las tablas
+#            hijas datos_conagua, datos_owm y datos_openmeteo (1:0..1).
+#            La firma pública de todas las funciones permanece sin cambios.
 #   15.0.0 — Extracción de toda la lógica MySQL a módulo independiente.
 #            Incluye: conexión, registro de errores, guardado de reportes,
 #            resúmenes web y prompts. Sanitización de claves API en errores.
@@ -72,8 +82,24 @@ def registrar_error_bd(conexion, fuente: str, mensaje: str, reporte_id=None):
 
 def guardar_reporte_en_bd(datos_reporte: dict) -> Optional[int]:
     """
-    Inserta el reporte climatológico completo en la base de datos.
-    Retorna el ID del registro insertado, o None si falló.
+    Inserta el reporte climatológico en el esquema normalizado por fuente.
+
+    Espera un dict con las siguientes claves obligatorias:
+        fecha_reporte, hora_reporte, timestamp_completo, ciudad,
+        guion_texto, modelo_ia_usado, guion_generado
+
+    Y las siguientes claves opcionales (sub-dicts por fuente):
+        conagua — dict con los campos de CONAGUA, o None si no respondió
+        owm     — dict con los campos de OWM, o None si no respondió
+        aqi     — dict con los campos de Open-Meteo, o None si no respondió
+
+    Flujo:
+        1. INSERT en reportes_climatologicos (metadatos + guion) → obtiene reporte_id
+        2. Si conagua is not None  → INSERT en datos_conagua
+        3. Si owm     is not None  → INSERT en datos_owm
+        4. Si aqi     is not None  → INSERT en datos_openmeteo
+
+    Retorna el ID del reporte insertado, o None si falló la inserción principal.
     """
     conexion = obtener_conexion_bd()
     if not conexion:
@@ -83,49 +109,117 @@ def guardar_reporte_en_bd(datos_reporte: dict) -> Optional[int]:
     try:
         cursor = conexion.cursor()
 
-        sql = """
-            INSERT INTO reportes_climatologicos (
-                fecha_reporte, hora_reporte, timestamp_completo, ciudad,
-
-                cna_disponible, cna_condicion,
-                cna_temp_max, cna_temp_min,
-                cna_prob_lluvia, cna_precipitacion,
-                cna_viento, cna_dir_viento, cna_rafagas,
-                cna_man_condicion, cna_man_temp_max, cna_man_temp_min,
-
-                owm_disponible, owm_temp_actual, owm_sensacion,
-                owm_humedad, owm_condicion, owm_visibilidad,
-                owm_lluvia_1h, owm_amanecer, owm_atardecer,
-
-                aqm_disponible, aqm_aqi, aqm_pm10, aqm_pm25,
-                aqm_uv_index, aqm_co, aqm_no2, aqm_so2, aqm_ozono,
-
-                guion_texto, modelo_ia_usado, guion_generado
-            ) VALUES (
-                %(fecha_reporte)s, %(hora_reporte)s, %(timestamp_completo)s, %(ciudad)s,
-
-                %(cna_disponible)s, %(cna_condicion)s,
-                %(cna_temp_max)s, %(cna_temp_min)s,
-                %(cna_prob_lluvia)s, %(cna_precipitacion)s,
-                %(cna_viento)s, %(cna_dir_viento)s, %(cna_rafagas)s,
-                %(cna_man_condicion)s, %(cna_man_temp_max)s, %(cna_man_temp_min)s,
-
-                %(owm_disponible)s, %(owm_temp_actual)s, %(owm_sensacion)s,
-                %(owm_humedad)s, %(owm_condicion)s, %(owm_visibilidad)s,
-                %(owm_lluvia_1h)s, %(owm_amanecer)s, %(owm_atardecer)s,
-
-                %(aqm_disponible)s, %(aqm_aqi)s, %(aqm_pm10)s, %(aqm_pm25)s,
-                %(aqm_uv_index)s, %(aqm_co)s, %(aqm_no2)s, %(aqm_so2)s, %(aqm_ozono)s,
-
-                %(guion_texto)s, %(modelo_ia_usado)s, %(guion_generado)s
-            )
-        """
-
-        cursor.execute(sql, datos_reporte)
+        # ------------------------------------------------------------------
+        # 1. Tabla madre: solo metadatos y guion
+        # Se extrae un sub-dict plano para evitar que mysql.connector intente
+        # serializar los valores anidados (conagua/owm/aqi) que son dicts.
+        # ------------------------------------------------------------------
+        datosPlanos = {
+            "fecha_reporte":      datos_reporte["fecha_reporte"],
+            "hora_reporte":       datos_reporte["hora_reporte"],
+            "timestamp_completo": datos_reporte["timestamp_completo"],
+            "ciudad":             datos_reporte["ciudad"],
+            "guion_texto":        datos_reporte["guion_texto"],
+            "modelo_ia_usado":    datos_reporte["modelo_ia_usado"],
+            "guion_generado":     datos_reporte["guion_generado"],
+        }
+        cursor.execute(
+            """INSERT INTO reportes_climatologicos (
+                   fecha_reporte, hora_reporte, timestamp_completo, ciudad,
+                   guion_texto, modelo_ia_usado, guion_generado
+               ) VALUES (
+                   %(fecha_reporte)s, %(hora_reporte)s, %(timestamp_completo)s, %(ciudad)s,
+                   %(guion_texto)s, %(modelo_ia_usado)s, %(guion_generado)s
+               )""",
+            datosPlanos,
+        )
         conexion.commit()
         nuevo_id = cursor.lastrowid
-        cursor.close()
         print(f"[BD] - {estado.ts()} ✅ Reporte guardado en historial (ID: {nuevo_id})")
+
+        # ------------------------------------------------------------------
+        # 2. datos_conagua (solo si la fuente respondió)
+        # ------------------------------------------------------------------
+        conagua = datos_reporte.get("conagua")
+        if conagua is not None:
+            cursor.execute(
+                """INSERT INTO datos_conagua (
+                       reporte_id,
+                       condicion, temp_max, temp_min, prob_lluvia, precipitacion,
+                       viento, dir_viento, rafagas,
+                       man_condicion, man_temp_max, man_temp_min
+                   ) VALUES (
+                       %s,
+                       %s, %s, %s, %s, %s,
+                       %s, %s, %s,
+                       %s, %s, %s
+                   )""",
+                (
+                    nuevo_id,
+                    conagua.get("condicion"),    conagua.get("temp_max"),
+                    conagua.get("temp_min"),     conagua.get("prob_lluvia"),
+                    conagua.get("precipitacion"),conagua.get("viento"),
+                    conagua.get("dir_viento"),   conagua.get("rafagas"),
+                    conagua.get("man_condicion"),conagua.get("man_temp_max"),
+                    conagua.get("man_temp_min"),
+                ),
+            )
+            conexion.commit()
+            print(f"[BD] - {estado.ts()} ✅ Datos CONAGUA guardados (reporte_id: {nuevo_id})")
+
+        # ------------------------------------------------------------------
+        # 3. datos_owm (solo si la fuente respondió)
+        # ------------------------------------------------------------------
+        owm = datos_reporte.get("owm")
+        if owm is not None:
+            cursor.execute(
+                """INSERT INTO datos_owm (
+                       reporte_id,
+                       temp_actual, sensacion, humedad, condicion,
+                       visibilidad, lluvia_1h, amanecer, atardecer
+                   ) VALUES (
+                       %s,
+                       %s, %s, %s, %s,
+                       %s, %s, %s, %s
+                   )""",
+                (
+                    nuevo_id,
+                    owm.get("temp"),       owm.get("feels"),
+                    owm.get("humedad"),    owm.get("desc"),
+                    owm.get("visibilidad"),owm.get("lluvia_1h"),
+                    owm.get("amanecer"),   owm.get("atardecer"),
+                ),
+            )
+            conexion.commit()
+            print(f"[BD] - {estado.ts()} ✅ Datos OWM guardados (reporte_id: {nuevo_id})")
+
+        # ------------------------------------------------------------------
+        # 4. datos_openmeteo (solo si la fuente respondió)
+        # ------------------------------------------------------------------
+        aqi = datos_reporte.get("aqi")
+        if aqi is not None:
+            cursor.execute(
+                """INSERT INTO datos_openmeteo (
+                       reporte_id,
+                       aqi, pm10, pm25, uv_index,
+                       co, no2, so2, ozono
+                   ) VALUES (
+                       %s,
+                       %s, %s, %s, %s,
+                       %s, %s, %s, %s
+                   )""",
+                (
+                    nuevo_id,
+                    aqi.get("aqi"),   aqi.get("pm10"),
+                    aqi.get("pm25"),  aqi.get("uv"),
+                    aqi.get("co"),    aqi.get("no2"),
+                    aqi.get("so2"),   aqi.get("ozono"),
+                ),
+            )
+            conexion.commit()
+            print(f"[BD] - {estado.ts()} ✅ Datos Open-Meteo guardados (reporte_id: {nuevo_id})")
+
+        cursor.close()
         return nuevo_id
 
     except ErrorMySQL as e:

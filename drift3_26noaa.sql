@@ -3,7 +3,7 @@
 -- https://www.phpmyadmin.net/
 --
 -- Host: mysql-drift3.alwaysdata.net
--- Generation Time: Apr 22, 2026 at 09:15 PM
+-- Generation Time: May 03, 2026 at 04:34 AM
 -- Server version: 10.11.15-MariaDB
 -- PHP Version: 8.4.19
 
@@ -18,8 +18,68 @@ SET time_zone = "+00:00";
 /*!40101 SET NAMES utf8mb4 */;
 
 --
--- Database: `drift3_26noaa`
+-- Database: `drift3_26_2noaa`
 --
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `datos_conagua`
+--
+
+CREATE TABLE `datos_conagua` (
+  `id` int(10) UNSIGNED NOT NULL,
+  `reporte_id` int(10) UNSIGNED NOT NULL COMMENT 'FK → reportes_climatologicos.id',
+  `condicion` varchar(150) DEFAULT NULL COMMENT 'Descripción del cielo (desciel)',
+  `temp_max` decimal(5,2) DEFAULT NULL COMMENT 'Temperatura máxima pronosticada (°C)',
+  `temp_min` decimal(5,2) DEFAULT NULL COMMENT 'Temperatura mínima pronosticada (°C)',
+  `prob_lluvia` decimal(5,2) DEFAULT NULL COMMENT 'Probabilidad de precipitación (%)',
+  `precipitacion` decimal(6,2) DEFAULT NULL COMMENT 'Precipitación acumulada del día (mm)',
+  `viento` decimal(6,2) DEFAULT NULL COMMENT 'Velocidad del viento (km/h)',
+  `dir_viento` varchar(10) DEFAULT NULL COMMENT 'Dirección del viento (N, S, NE, etc.)',
+  `rafagas` decimal(6,2) DEFAULT NULL COMMENT 'Velocidad de ráfagas (km/h)',
+  `man_condicion` varchar(150) DEFAULT NULL COMMENT 'Condición de mañana (desciel)',
+  `man_temp_max` decimal(5,2) DEFAULT NULL COMMENT 'Temp. máxima de mañana (°C)',
+  `man_temp_min` decimal(5,2) DEFAULT NULL COMMENT 'Temp. mínima de mañana (°C)'
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Datos de pronóstico CONAGUA/SMN por reporte climatológico';
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `datos_openmeteo`
+--
+
+CREATE TABLE `datos_openmeteo` (
+  `id` int(10) UNSIGNED NOT NULL,
+  `reporte_id` int(10) UNSIGNED NOT NULL COMMENT 'FK → reportes_climatologicos.id',
+  `aqi` decimal(6,2) DEFAULT NULL COMMENT 'Índice de Calidad del Aire (US AQI)',
+  `pm10` decimal(7,3) DEFAULT NULL COMMENT 'Material particulado PM10 (μg/m³)',
+  `pm25` decimal(7,3) DEFAULT NULL COMMENT 'Material particulado PM2.5 (μg/m³)',
+  `uv_index` decimal(5,2) DEFAULT NULL COMMENT 'Índice UV',
+  `co` decimal(9,3) DEFAULT NULL COMMENT 'Monóxido de carbono CO (μg/m³)',
+  `no2` decimal(9,3) DEFAULT NULL COMMENT 'Dióxido de nitrógeno NO2 (μg/m³)',
+  `so2` decimal(9,3) DEFAULT NULL COMMENT 'Dióxido de azufre SO2 (μg/m³)',
+  `ozono` decimal(9,3) DEFAULT NULL COMMENT 'Ozono O3 (μg/m³)'
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Datos de calidad del aire e índice UV Open-Meteo por reporte climatológico';
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `datos_owm`
+--
+
+CREATE TABLE `datos_owm` (
+  `id` int(10) UNSIGNED NOT NULL,
+  `reporte_id` int(10) UNSIGNED NOT NULL COMMENT 'FK → reportes_climatologicos.id',
+  `temp_actual` decimal(5,2) DEFAULT NULL COMMENT 'Temperatura actual (°C)',
+  `sensacion` decimal(5,2) DEFAULT NULL COMMENT 'Sensación térmica (°C)',
+  `humedad` decimal(5,2) DEFAULT NULL COMMENT 'Humedad relativa (%)',
+  `condicion` varchar(150) DEFAULT NULL COMMENT 'Descripción del tiempo (weather[0].description)',
+  `visibilidad` decimal(6,2) DEFAULT NULL COMMENT 'Visibilidad (km)',
+  `lluvia_1h` decimal(6,2) DEFAULT NULL COMMENT 'Lluvia registrada en la última hora (mm)',
+  `amanecer` time DEFAULT NULL COMMENT 'Hora del amanecer',
+  `atardecer` time DEFAULT NULL COMMENT 'Hora del atardecer'
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Datos de condiciones actuales OpenWeatherMap por reporte climatológico';
 
 -- --------------------------------------------------------
 
@@ -60,36 +120,6 @@ CREATE TABLE `reportes_climatologicos` (
   `hora_reporte` time NOT NULL COMMENT 'Hora de recolección de datos (HH:MM)',
   `timestamp_completo` datetime NOT NULL COMMENT 'Fecha y hora exacta del reporte',
   `ciudad` varchar(100) NOT NULL DEFAULT 'Huichapan, MX',
-  `cna_disponible` tinyint(1) NOT NULL DEFAULT 0 COMMENT '1 si CONAGUA respondió, 0 si falló',
-  `cna_condicion` varchar(150) DEFAULT NULL COMMENT 'Descripción del cielo (desciel)',
-  `cna_temp_max` decimal(5,2) DEFAULT NULL COMMENT 'Temperatura máxima pronosticada (°C)',
-  `cna_temp_min` decimal(5,2) DEFAULT NULL COMMENT 'Temperatura mínima pronosticada (°C)',
-  `cna_prob_lluvia` decimal(5,2) DEFAULT NULL COMMENT 'Probabilidad de precipitación (%)',
-  `cna_precipitacion` decimal(6,2) DEFAULT NULL COMMENT 'Precipitación acumulada del día (mm)',
-  `cna_viento` decimal(6,2) DEFAULT NULL COMMENT 'Velocidad del viento (km/h)',
-  `cna_dir_viento` varchar(10) DEFAULT NULL COMMENT 'Dirección del viento (N, S, NE, etc.)',
-  `cna_rafagas` decimal(6,2) DEFAULT NULL COMMENT 'Velocidad de ráfagas (km/h)',
-  `cna_man_condicion` varchar(150) DEFAULT NULL COMMENT 'Condición de mañana (desciel)',
-  `cna_man_temp_max` decimal(5,2) DEFAULT NULL COMMENT 'Temp. máxima de mañana (°C)',
-  `cna_man_temp_min` decimal(5,2) DEFAULT NULL COMMENT 'Temp. mínima de mañana (°C)',
-  `owm_disponible` tinyint(1) NOT NULL DEFAULT 0 COMMENT '1 si OWM respondió, 0 si falló',
-  `owm_temp_actual` decimal(5,2) DEFAULT NULL COMMENT 'Temperatura actual (°C)',
-  `owm_sensacion` decimal(5,2) DEFAULT NULL COMMENT 'Sensación térmica (°C)',
-  `owm_humedad` decimal(5,2) DEFAULT NULL COMMENT 'Humedad relativa (%)',
-  `owm_condicion` varchar(150) DEFAULT NULL COMMENT 'Descripción del tiempo (weather[0].description)',
-  `owm_visibilidad` decimal(6,2) DEFAULT NULL COMMENT 'Visibilidad (km)',
-  `owm_lluvia_1h` decimal(6,2) DEFAULT NULL COMMENT 'Lluvia registrada en la última hora (mm)',
-  `owm_amanecer` time DEFAULT NULL COMMENT 'Hora del amanecer',
-  `owm_atardecer` time DEFAULT NULL COMMENT 'Hora del atardecer',
-  `aqm_disponible` tinyint(1) NOT NULL DEFAULT 0 COMMENT '1 si Open-Meteo respondió, 0 si falló',
-  `aqm_aqi` decimal(6,2) DEFAULT NULL COMMENT 'Índice de Calidad del Aire (US AQI)',
-  `aqm_pm10` decimal(7,3) DEFAULT NULL COMMENT 'Material particulado PM10 (μg/m³)',
-  `aqm_pm25` decimal(7,3) DEFAULT NULL COMMENT 'Material particulado PM2.5 (μg/m³)',
-  `aqm_uv_index` decimal(5,2) DEFAULT NULL COMMENT 'Índice UV',
-  `aqm_co` decimal(9,3) DEFAULT NULL COMMENT 'Monóxido de carbono CO (μg/m³)',
-  `aqm_no2` decimal(9,3) DEFAULT NULL COMMENT 'Dióxido de nitrógeno NO2 (μg/m³)',
-  `aqm_so2` decimal(9,3) DEFAULT NULL COMMENT 'Dióxido de azufre SO2 (μg/m³)',
-  `aqm_ozono` decimal(9,3) DEFAULT NULL COMMENT 'Ozono O3 (μg/m³)',
   `guion_texto` mediumtext DEFAULT NULL COMMENT 'Guion completo generado por Gemini',
   `modelo_ia_usado` varchar(80) DEFAULT NULL COMMENT 'Modelo de Gemini utilizado (principal o respaldo)',
   `guion_generado` tinyint(1) NOT NULL DEFAULT 0 COMMENT '1 si el guion fue generado exitosamente',
@@ -152,16 +182,51 @@ CREATE TABLE `vista_historial_resumido` (
 ,`lluvia_ultima_hora_mm` decimal(6,2)
 ,`calidad_aire_aqi` decimal(6,2)
 ,`indice_uv` decimal(5,2)
-,`cna_disponible` tinyint(1)
-,`owm_disponible` tinyint(1)
-,`aqm_disponible` tinyint(1)
+,`cna_disponible` int(1)
+,`owm_disponible` int(1)
+,`aqm_disponible` int(1)
 ,`guion_generado` tinyint(1)
 ,`modelo_ia_usado` varchar(80)
 );
 
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `webcam_capturas`
+--
+
+CREATE TABLE `webcam_capturas` (
+  `id` int(10) UNSIGNED NOT NULL,
+  `fecha_hora` datetime NOT NULL COMMENT 'Timestamp del disparo programado',
+  `url` varchar(512) NOT NULL COMMENT 'URL HTTPS de Cloudinary',
+  `public_id` varchar(255) NOT NULL COMMENT 'Identificador dentro de Cloudinary',
+  `tamano_kb` smallint(5) UNSIGNED NOT NULL DEFAULT 0 COMMENT 'Peso de la imagen en KB'
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='Capturas periodicas de webcam NOAA Stream';
+
 --
 -- Indexes for dumped tables
 --
+
+--
+-- Indexes for table `datos_conagua`
+--
+ALTER TABLE `datos_conagua`
+  ADD PRIMARY KEY (`id`),
+  ADD UNIQUE KEY `uq_reporte` (`reporte_id`);
+
+--
+-- Indexes for table `datos_openmeteo`
+--
+ALTER TABLE `datos_openmeteo`
+  ADD PRIMARY KEY (`id`),
+  ADD UNIQUE KEY `uq_reporte` (`reporte_id`);
+
+--
+-- Indexes for table `datos_owm`
+--
+ALTER TABLE `datos_owm`
+  ADD PRIMARY KEY (`id`),
+  ADD UNIQUE KEY `uq_reporte` (`reporte_id`);
 
 --
 -- Indexes for table `errores_recoleccion`
@@ -186,9 +251,7 @@ ALTER TABLE `reportes_climatologicos`
   ADD PRIMARY KEY (`id`),
   ADD KEY `idx_fecha` (`fecha_reporte`),
   ADD KEY `idx_timestamp` (`timestamp_completo`),
-  ADD KEY `idx_ciudad` (`ciudad`),
-  ADD KEY `idx_temp_actual` (`owm_temp_actual`),
-  ADD KEY `idx_aqi` (`aqm_aqi`);
+  ADD KEY `idx_ciudad` (`ciudad`);
 
 --
 -- Indexes for table `resumen_reporte_clima`
@@ -198,8 +261,33 @@ ALTER TABLE `resumen_reporte_clima`
   ADD KEY `idx_reporte_id` (`reporte_id`);
 
 --
+-- Indexes for table `webcam_capturas`
+--
+ALTER TABLE `webcam_capturas`
+  ADD PRIMARY KEY (`id`),
+  ADD UNIQUE KEY `uq_fecha_hora` (`fecha_hora`);
+
+--
 -- AUTO_INCREMENT for dumped tables
 --
+
+--
+-- AUTO_INCREMENT for table `datos_conagua`
+--
+ALTER TABLE `datos_conagua`
+  MODIFY `id` int(10) UNSIGNED NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `datos_openmeteo`
+--
+ALTER TABLE `datos_openmeteo`
+  MODIFY `id` int(10) UNSIGNED NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `datos_owm`
+--
+ALTER TABLE `datos_owm`
+  MODIFY `id` int(10) UNSIGNED NOT NULL AUTO_INCREMENT;
 
 --
 -- AUTO_INCREMENT for table `errores_recoleccion`
@@ -225,6 +313,12 @@ ALTER TABLE `reportes_climatologicos`
 ALTER TABLE `resumen_reporte_clima`
   MODIFY `id` int(10) UNSIGNED NOT NULL AUTO_INCREMENT;
 
+--
+-- AUTO_INCREMENT for table `webcam_capturas`
+--
+ALTER TABLE `webcam_capturas`
+  MODIFY `id` int(10) UNSIGNED NOT NULL AUTO_INCREMENT;
+
 -- --------------------------------------------------------
 
 --
@@ -232,7 +326,7 @@ ALTER TABLE `resumen_reporte_clima`
 --
 DROP TABLE IF EXISTS `vista_estadisticas_diarias`;
 
-CREATE ALGORITHM=UNDEFINED DEFINER=`drift3`@`%` SQL SECURITY DEFINER VIEW `vista_estadisticas_diarias`  AS SELECT `reportes_climatologicos`.`fecha_reporte` AS `fecha_reporte`, count(0) AS `total_reportes`, round(avg(`reportes_climatologicos`.`owm_temp_actual`),2) AS `temp_promedio_c`, round(max(`reportes_climatologicos`.`owm_temp_actual`),2) AS `temp_maxima_c`, round(min(`reportes_climatologicos`.`owm_temp_actual`),2) AS `temp_minima_c`, round(avg(`reportes_climatologicos`.`owm_humedad`),2) AS `humedad_promedio_pct`, round(max(`reportes_climatologicos`.`owm_lluvia_1h`),2) AS `lluvia_maxima_hora_mm`, round(sum(`reportes_climatologicos`.`owm_lluvia_1h`),2) AS `lluvia_acumulada_dia_mm`, round(avg(`reportes_climatologicos`.`aqm_aqi`),2) AS `aqi_promedio`, round(max(`reportes_climatologicos`.`aqm_uv_index`),2) AS `uv_maximo_dia` FROM `reportes_climatologicos` GROUP BY `reportes_climatologicos`.`fecha_reporte` ORDER BY `reportes_climatologicos`.`fecha_reporte` DESC ;
+CREATE ALGORITHM=UNDEFINED DEFINER=`drift3`@`%` SQL SECURITY DEFINER VIEW `vista_estadisticas_diarias`  AS SELECT `r`.`fecha_reporte` AS `fecha_reporte`, count(`r`.`id`) AS `total_reportes`, round(avg(`o`.`temp_actual`),2) AS `temp_promedio_c`, round(max(`o`.`temp_actual`),2) AS `temp_maxima_c`, round(min(`o`.`temp_actual`),2) AS `temp_minima_c`, round(avg(`o`.`humedad`),2) AS `humedad_promedio_pct`, round(max(`o`.`lluvia_1h`),2) AS `lluvia_maxima_hora_mm`, round(sum(`o`.`lluvia_1h`),2) AS `lluvia_acumulada_dia_mm`, round(avg(`m`.`aqi`),2) AS `aqi_promedio`, round(max(`m`.`uv_index`),2) AS `uv_maximo_dia` FROM ((`reportes_climatologicos` `r` left join `datos_owm` `o` on(`o`.`reporte_id` = `r`.`id`)) left join `datos_openmeteo` `m` on(`m`.`reporte_id` = `r`.`id`)) GROUP BY `r`.`fecha_reporte` ORDER BY `r`.`fecha_reporte` DESC ;
 
 -- --------------------------------------------------------
 
@@ -241,11 +335,29 @@ CREATE ALGORITHM=UNDEFINED DEFINER=`drift3`@`%` SQL SECURITY DEFINER VIEW `vista
 --
 DROP TABLE IF EXISTS `vista_historial_resumido`;
 
-CREATE ALGORITHM=UNDEFINED DEFINER=`drift3`@`%` SQL SECURITY DEFINER VIEW `vista_historial_resumido`  AS SELECT `reportes_climatologicos`.`id` AS `id`, `reportes_climatologicos`.`timestamp_completo` AS `timestamp_completo`, `reportes_climatologicos`.`ciudad` AS `ciudad`, `reportes_climatologicos`.`owm_temp_actual` AS `temperatura_actual_c`, `reportes_climatologicos`.`cna_temp_max` AS `temp_max_c`, `reportes_climatologicos`.`cna_temp_min` AS `temp_min_c`, `reportes_climatologicos`.`owm_humedad` AS `humedad_pct`, `reportes_climatologicos`.`cna_prob_lluvia` AS `prob_lluvia_pct`, `reportes_climatologicos`.`owm_lluvia_1h` AS `lluvia_ultima_hora_mm`, `reportes_climatologicos`.`aqm_aqi` AS `calidad_aire_aqi`, `reportes_climatologicos`.`aqm_uv_index` AS `indice_uv`, `reportes_climatologicos`.`cna_disponible` AS `cna_disponible`, `reportes_climatologicos`.`owm_disponible` AS `owm_disponible`, `reportes_climatologicos`.`aqm_disponible` AS `aqm_disponible`, `reportes_climatologicos`.`guion_generado` AS `guion_generado`, `reportes_climatologicos`.`modelo_ia_usado` AS `modelo_ia_usado` FROM `reportes_climatologicos` ORDER BY `reportes_climatologicos`.`timestamp_completo` DESC ;
+CREATE ALGORITHM=UNDEFINED DEFINER=`drift3`@`%` SQL SECURITY DEFINER VIEW `vista_historial_resumido`  AS SELECT `r`.`id` AS `id`, `r`.`timestamp_completo` AS `timestamp_completo`, `r`.`ciudad` AS `ciudad`, `o`.`temp_actual` AS `temperatura_actual_c`, `c`.`temp_max` AS `temp_max_c`, `c`.`temp_min` AS `temp_min_c`, `o`.`humedad` AS `humedad_pct`, `c`.`prob_lluvia` AS `prob_lluvia_pct`, `o`.`lluvia_1h` AS `lluvia_ultima_hora_mm`, `m`.`aqi` AS `calidad_aire_aqi`, `m`.`uv_index` AS `indice_uv`, if(`c`.`reporte_id` is not null,1,0) AS `cna_disponible`, if(`o`.`reporte_id` is not null,1,0) AS `owm_disponible`, if(`m`.`reporte_id` is not null,1,0) AS `aqm_disponible`, `r`.`guion_generado` AS `guion_generado`, `r`.`modelo_ia_usado` AS `modelo_ia_usado` FROM (((`reportes_climatologicos` `r` left join `datos_conagua` `c` on(`c`.`reporte_id` = `r`.`id`)) left join `datos_owm` `o` on(`o`.`reporte_id` = `r`.`id`)) left join `datos_openmeteo` `m` on(`m`.`reporte_id` = `r`.`id`)) ORDER BY `r`.`timestamp_completo` DESC ;
 
 --
 -- Constraints for dumped tables
 --
+
+--
+-- Constraints for table `datos_conagua`
+--
+ALTER TABLE `datos_conagua`
+  ADD CONSTRAINT `fk_conagua_reporte` FOREIGN KEY (`reporte_id`) REFERENCES `reportes_climatologicos` (`id`) ON DELETE CASCADE;
+
+--
+-- Constraints for table `datos_openmeteo`
+--
+ALTER TABLE `datos_openmeteo`
+  ADD CONSTRAINT `fk_openmeteo_reporte` FOREIGN KEY (`reporte_id`) REFERENCES `reportes_climatologicos` (`id`) ON DELETE CASCADE;
+
+--
+-- Constraints for table `datos_owm`
+--
+ALTER TABLE `datos_owm`
+  ADD CONSTRAINT `fk_owm_reporte` FOREIGN KEY (`reporte_id`) REFERENCES `reportes_climatologicos` (`id`) ON DELETE CASCADE;
 
 --
 -- Constraints for table `errores_recoleccion`
