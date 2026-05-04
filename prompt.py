@@ -229,7 +229,7 @@ def construir_prompt(cna, owm, aqi, forecast=None):
 
     prompt = (
         "Eres el sistema automatizado de alerta meteorológica regional. "
-        "Escribe un reporte de radio muy detallado para {ciudad} y alrededores. Evita ser redundante en la redacción.\n\n"
+        "Escribe un reporte de radio muy detallado para {ciudad} y alrededores. Evita ser redundante en la redacción y personaliza según la hora actual.\n\n"
         "{cna}\n\n"
         "{owm}\n\n"
         "FUENTE 3 (Open-Meteo - Salud Ambiental y Radiación):\n"
