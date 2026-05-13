@@ -202,10 +202,61 @@ def _regla_lluvia(owm, cna):
 
 
 # ==========================================
+#   BLOQUE SÍSMICO (INYECTADO)
+# ==========================================
+
+def _bloque_sismo(contexto_sismo: Optional[dict]) -> str:
+    """
+    Genera el bloque de contexto sísmico para inyectarlo en el reporte del clima.
+    Incluye datos enriquecidos de USGS/EMSC/IRIS si están disponibles.
+    """
+    if not contexto_sismo:
+        return ""
+
+    magnitud = contexto_sismo.get("ssn_magnitud")
+    epicentro = contexto_sismo.get("epicentro", "territorio mexicano")
+
+    if magnitud:
+        mag_str = f"magnitud preliminar {magnitud}"
+    else:
+        mag_str = "intensidad detectada"
+
+    # Datos enriquecidos de APIs internacionales
+    extras = []
+    if contexto_sismo.get("usgs_magnitud"):
+        extras.append(f"USGS reporta magnitud {contexto_sismo['usgs_magnitud']}")
+    if contexto_sismo.get("emsc_magnitud"):
+        extras.append(f"EMSC reporta magnitud {contexto_sismo['emsc_magnitud']}")
+    if contexto_sismo.get("usgs_tsunami") == 1:
+        extras.append("USGS ha emitido alerta de tsunami")
+    if contexto_sismo.get("replicas_detectadas"):
+        extras.append(f"Se han detectado {contexto_sismo['replicas_detectadas']} réplicas")
+
+    extras_str = ""
+    if extras:
+        extras_str = (
+            "\nDatos internacionales disponibles: " + ". ".join(extras) + ".\n"
+            "Incluye estos datos en tu mención del sismo de forma natural y accesible.\n"
+        )
+
+    return (
+        f"CONTEXTO SÍSMICO RECIENTE (CRÍTICO - INYECTAR AL INICIO DEL REPORTE, DESPUÉS DE LA HORA Y FECHA):\n"
+        f"Ha ocurrido un sismo recientemente de {mag_str} con epicentro en {epicentro}.\n"
+        f"{extras_str}"
+        "Regla especial: Inicia tu reporte meteorológico informando brevemente sobre este evento. "
+        "Usa una frase como: 'Antes de iniciar con las condiciones meteorológicas, informamos que un sismo de "
+        f"{mag_str} fue registrado recientemente con epicentro en {epicentro}...'. "
+        "Añade que 'El reporte detallado con información de agencias sismológicas internacionales "
+        "estará disponible en la próxima actualización de esta frecuencia'. "
+        "Tras esta breve mención, continúa fluidamente con el reporte del clima habitual.\n"
+    )
+
+
+# ==========================================
 #   PUNTO DE ENTRADA PÚBLICO
 # ==========================================
 
-def construir_prompt(cna, owm, aqi, forecast=None):
+def construir_prompt(cna, owm, aqi, forecast=None, contexto_sismo=None):
     """
     Ensambla el prompt completo para el modelo de IA a partir de los datos
     recolectados de las cuatro fuentes meteorológicas.
@@ -215,6 +266,7 @@ def construir_prompt(cna, owm, aqi, forecast=None):
         owm      — dict extraído en meteorologo (incluye pressure_etiqueta, viento, etc.) o None
         aqi      — dict extraído en meteorologo (incluye aod_etiqueta) o None
         forecast — dict pre-procesado del forecast horario o None
+        contexto_sismo — dict con datos del sismo reciente si lo hay, o None
 
     Retorna el texto del prompt listo para enviar a Gemini/Groq.
     """
@@ -226,10 +278,12 @@ def construir_prompt(cna, owm, aqi, forecast=None):
     bloque_aqi   = _bloque_aqi(aqi)
     bloque_fc    = _bloque_forecast(forecast)
     regla_lluvia = _regla_lluvia(owm, cna)
+    bloque_sis   = _bloque_sismo(contexto_sismo)
 
     prompt = (
         "Eres el sistema automatizado de alerta meteorológica regional. "
         "Escribe un reporte de radio muy detallado para {ciudad} y alrededores. Evita ser redundante en la redacción y personaliza según la hora actual.\n\n"
+        "{bloque_sis}"
         "{cna}\n\n"
         "{owm}\n\n"
         "FUENTE 3 (Open-Meteo - Salud Ambiental y Radiación):\n"
@@ -297,6 +351,7 @@ def construir_prompt(cna, owm, aqi, forecast=None):
         "recuperación de los datos es {hora}."
     ).format(
         ciudad=config.CIUDAD,
+        bloque_sis=bloque_sis,
         cna=bloque_cna,
         owm=bloque_owm,
         aqi=bloque_aqi,

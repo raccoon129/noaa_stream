@@ -198,11 +198,11 @@ def iniciar_o_reiniciar_stream():
 #   TRANSMISIÓN DE SILENCIO
 # ==========================================
 
-def transmitir_silencio(segundos, es_espera=False):
+def transmitir_silencio(segundos, es_espera=False, es_alarma=False):
     """
     Inyecta muestras de silencio PCM al stream durante los segundos indicados
     respetando el tempo real mediante rate-limiting explícito.
-    Se interrumpe si cambia el modo (espera <-> transmisión normal).
+    Se interrumpe si cambia el modo (espera <-> transmisión normal) o si hay alerta sísmica.
     """
     try:
         frames_totales  = int(config.SAMPLE_RATE * segundos)
@@ -210,6 +210,8 @@ def transmitir_silencio(segundos, es_espera=False):
         frames_escritos = 0
 
         while frames_escritos < frames_totales:
+            if not es_alarma and estado.alerta_sismica:
+                break
             if not es_espera and estado.actualizando_clima:
                 break
             if es_espera and not estado.actualizando_clima:
@@ -240,7 +242,7 @@ def transmitir_silencio(segundos, es_espera=False):
 #   INYECCIÓN DE ARCHIVO WAV AL STREAM
 # ==========================================
 
-def inyectar_audio_al_stream(ruta_archivo, es_espera=False):
+def inyectar_audio_al_stream(ruta_archivo, es_espera=False, es_alarma=False):
     """
     Lee un archivo WAV y escribe sus frames PCM al stdin del stream
     respetando el tempo real del audio mediante rate-limiting explícito.
@@ -251,7 +253,7 @@ def inyectar_audio_al_stream(ruta_archivo, es_espera=False):
     garantiza que cada chunk de audio se escribe aproximadamente en el
     tiempo que le correspondería reproducirse en tiempo real.
 
-    Se interrumpe si cambia el modo (espera <-> transmisión normal).
+    Se interrumpe si cambia el modo o si entra alerta sísmica.
     Gestiona Broken Pipe con auto-recuperación.
     """
     if not os.path.exists(ruta_archivo):
@@ -267,6 +269,8 @@ def inyectar_audio_al_stream(ruta_archivo, es_espera=False):
             chunk     = framerate // 2     # bloques de 0.5 s en la frecuencia real del archivo
 
             while True:
+                if not es_alarma and estado.alerta_sismica:
+                    break
                 if not es_espera and estado.actualizando_clima:
                     break
                 if es_espera and not estado.actualizando_clima:
@@ -354,7 +358,7 @@ def _watchdog_stream(intervalo=15):
 
     while True:
         time.sleep(intervalo)
-        if estado.actualizando_clima:
+        if estado.actualizando_clima or estado.alerta_sismica:
             fallos_consecutivos = 0
             continue
 

@@ -32,6 +32,7 @@ import estado
 import ia
 import meteorologo
 import prompt
+import sismo
 import tts
 
 
@@ -106,7 +107,15 @@ def actualizar_audio_clima():
         # --------------------------------------------------
         # 5. Construcción del prompt
         # --------------------------------------------------
-        texto_prompt = prompt.construir_prompt(datos_conagua, owm, aqi, datos_met["forecast"])
+        contexto = None
+        if estado.sismo_activo and estado.ciclos_sismo_restantes > 0:
+            # Re-consultar APIs sísmicas para datos más consolidados
+            contexto = sismo.enriquecer_con_apis()
+        elif estado.sismo_activo:
+            contexto = estado.datos_sismo
+        texto_prompt = prompt.construir_prompt(
+            datos_conagua, owm, aqi, datos_met["forecast"], contexto_sismo=contexto
+        )
 
         # --------------------------------------------------
         # 6. Generación del guion con IA
@@ -177,8 +186,21 @@ def actualizar_audio_clima():
         # 9. Síntesis de voz
         # --------------------------------------------------
         if texto_guion:
-            print(f"[METEORÓLOGO] - {estado.ts()} Guion maestro redactado. Sintetizando voz ({config.VOZ_TTS})...")
-            tts.sintetizar(texto_guion)
+            if estado.alerta_sismica:
+                print(f"[SISTEMA] - {estado.ts()} ⚠️  Alerta sísmica en curso. Se omite síntesis de audio.")
+            else:
+                print(f"[METEORÓLOGO] - {estado.ts()} Guion maestro redactado. Sintetizando voz ({config.VOZ_TTS})...")
+                tts.sintetizar(texto_guion)
+                # Si había intercalado sismo↔clima, este guion combinado lo reemplaza
+                if estado.sismo_intercalando:
+                    estado.sismo_intercalando = False
+                    estado.ciclos_sismo_restantes -= 1
+                    if estado.ciclos_sismo_restantes <= 0:
+                        estado.sismo_activo = False
+                        estado.datos_sismo = None
+                        print(f"[SISTEMA] - {estado.ts()} ✅ Evento sísmico finalizado. Volviendo a modo normal.")
+                    else:
+                        print(f"[SISTEMA] - {estado.ts()} ℹ️ Ciclos de enriquecimiento restantes: {estado.ciclos_sismo_restantes}")
         else:
             print(f"[SISTEMA] - {estado.ts()} ❌ No se generó guion. No se actualizará el audio.")
 
@@ -293,11 +315,22 @@ def iniciar_estacion():
     if not os.path.exists(config.CARPETA_MUSICA):
         os.makedirs(config.CARPETA_MUSICA)
 
+    # Verificar archivos de audio críticos al arranque
+    for archivo, nombre in [(config.ARCHIVO_ALERTA_SISMICA, "Alarma sísmica"),
+                            (config.ARCHIVO_SILENCIO, "Silencio")]:
+        if not os.path.exists(archivo):
+            print(f"[SISTEMA] - {estado.ts()} ⚠️  ADVERTENCIA: '{archivo}' ({nombre}) NO ENCONTRADO.")
+        else:
+            print(f"[SISTEMA] - {estado.ts()} ✅ {nombre}: {archivo}")
+
     # Inicializar el pipeline de audio
     dj.iniciar_o_reiniciar_stream()
 
     # Lanzar watchdog que detecta y recupera caídas silenciosas del pipeline
     dj.iniciar_watchdog(intervalo=15)
+
+    # Iniciar el monitor de alertas sísmicas (SASSLA)
+    sismo.iniciar_monitor()
 
     # Pregunta de arranque interactivo
     ejecutar_ahora = preguntar_arranque_inicial()
@@ -314,6 +347,50 @@ def iniciar_estacion():
     aviso_previo_mostrado = False
 
     while True:
+        # --- 1. MODO ALERTA SÍSMICA (ALTA PRIORIDAD) ---
+        if estado.alerta_sismica:
+            print(f"\n[DJ] - {estado.ts()} 🚨 MODO ALERTA SÍSMICA ACTIVADO 🚨")
+            reps = config.REPETICIONES_SIMULACRO if estado.sismo_es_simulacro else config.REPETICIONES_SISMO_REAL
+
+            # 1a. Reproducir la alerta sonora × N
+            for i in range(reps):
+                print(f"[DJ] - {estado.ts()} 🚨 Transmitiendo alarma sonora ({i+1}/{reps})...")
+                dj.inyectar_audio_al_stream(config.ARCHIVO_ALERTA_SISMICA, es_espera=False, es_alarma=True)
+                dj.transmitir_silencio(1.0, es_alarma=True)
+
+            # 1b. Señalar que la alarma terminó (sismo_flujo.py espera esta señal)
+            estado.alerta_sismica = False
+
+            # 1c. SIMULACRO: simplemente volver a modo normal
+            if estado.sismo_es_simulacro:
+                print(f"\n[DJ] - {estado.ts()} ✅ Alarma de simulacro completada. Volviendo a modo normal.")
+                # flujo_alerta_sismica() limpia las banderas en su hilo
+                continue
+
+            # 1d. SISMO REAL: bucle de espera con TTS + silencio
+            print(f"\n[DJ] - {estado.ts()} ⏳ Esperando reporte sísmico...")
+            while not estado.sismo_guion_listo:
+                # Reproducir audio de espera si existe
+                if os.path.exists(config.ARCHIVO_SISMO_ESPERA):
+                    dj.inyectar_audio_al_stream(config.ARCHIVO_SISMO_ESPERA, es_espera=True, es_alarma=True)
+                # Silencio ×3
+                for _ in range(3):
+                    if estado.sismo_guion_listo:
+                        break
+                    dj.inyectar_audio_al_stream(config.ARCHIVO_SILENCIO, es_espera=True, es_alarma=True)
+
+            # 1e. Reporte sísmico listo → reproducir ×2
+            print(f"\n[DJ] - {estado.ts()} 🎙️  Transmitiendo reporte sísmico inmediato (x2)")
+            for _ in range(2):
+                dj.inyectar_audio_al_stream(config.ARCHIVO_SISMO_REPORTE, es_alarma=True)
+                dj.transmitir_silencio(1.0, es_alarma=True)
+
+            # 1f. Limpiar flags de guion, mantener intercalado activo
+            estado.sismo_guion_listo = False
+            print(f"\n[DJ] - {estado.ts()} ✅ Transición a modo intercalado sismo↔clima.")
+            continue
+
+        # --- 2. AVISOS DEL SCHEDULER ---
         segundos_proximo = schedule.idle_seconds()
         if segundos_proximo is not None:
             if 0 <= segundos_proximo <= 120 and not aviso_previo_mostrado:
@@ -324,7 +401,7 @@ def iniciar_estacion():
             elif segundos_proximo > 120 or segundos_proximo < 0:
                 aviso_previo_mostrado = False
 
-        # Modo espera: el meteorólogo está trabajando
+        # --- 3. MODO ESPERA (GENERANDO REPORTE CLIMA) ---
         if estado.actualizando_clima:
             contador_canciones += 1
             print(
@@ -338,25 +415,37 @@ def iniciar_estacion():
                 dj.transmitir_silencio(5, es_espera=True)
             continue
 
-        # Modo normal: 3 repeticiones del reporte + 2 canciones
+        # --- 4. MODO NORMAL: REPORTES ---
         reporte_interrumpido = False
         for i in range(3):
-            if estado.actualizando_clima:
+            if estado.actualizando_clima or estado.alerta_sismica:
                 reporte_interrumpido = True
                 break
-            contador_reportes += 1
-            print(
-                f"\n[DJ] - {estado.ts()} 🎙️  Transmitiendo Reporte NOAA "
-                f"(Ciclo {i + 1}/3 | Total histórico: #{contador_reportes})"
-            )
-            dj.inyectar_audio_al_stream(config.ARCHIVO_CLIMA)
+
+            # Intercalado sismo↔clima: pares=sismo, impares=clima
+            if estado.sismo_intercalando and os.path.exists(config.ARCHIVO_SISMO_REPORTE) and i % 2 == 0:
+                contador_reportes += 1
+                print(
+                    f"\n[DJ] - {estado.ts()} 🎙️  Transmitiendo Reporte Sísmico Intercalado "
+                    f"(Ciclo {i + 1}/3 | Total histórico: #{contador_reportes})"
+                )
+                dj.inyectar_audio_al_stream(config.ARCHIVO_SISMO_REPORTE)
+            else:
+                contador_reportes += 1
+                print(
+                    f"\n[DJ] - {estado.ts()} 🎙️  Transmitiendo Reporte NOAA "
+                    f"(Ciclo {i + 1}/3 | Total histórico: #{contador_reportes})"
+                )
+                dj.inyectar_audio_al_stream(config.ARCHIVO_CLIMA)
+
             dj.transmitir_silencio(1.0)
 
         if reporte_interrumpido:
             continue
 
+        # --- 5. MODO NORMAL: CANCIONES ---
         for j in range(2):
-            if estado.actualizando_clima:
+            if estado.actualizando_clima or estado.alerta_sismica:
                 break
             pista = dj.obtener_pista_aleatoria()
             if pista:

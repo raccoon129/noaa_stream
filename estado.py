@@ -27,3 +27,33 @@ flujo_radio = None
 def ts() -> str:
     """Retorna el timestamp actual formateado para impresión en consola."""
     return datetime.datetime.now().strftime("%H:%M:%S %d/%m/%Y")
+
+
+# ==========================================
+#   ESTADO GLOBAL SÍSMICO
+# ==========================================
+
+# Flag: True mientras se reproduce alerta_sismica.wav en el DJ
+alerta_sismica: bool = False
+
+# Flag: True mientras hay un evento sísmico en cualquier fase activa
+sismo_activo: bool = False
+
+# Flag: True cuando el reporte sísmico inmediato está listo (sismo_reporte.wav)
+sismo_guion_listo: bool = False
+
+# Flag: True mientras el DJ intercala sismo_reporte.wav con clima_actual.wav
+sismo_intercalando: bool = False
+
+# Contador: cuántos ciclos de clima todavía re-consultan APIs sísmicas (2→1→0)
+ciclos_sismo_restantes: int = 0
+
+# Dict con todos los datos recopilados del sismo actual (SASSLA + SSN + APIs)
+datos_sismo: dict = None
+
+# time.time() del momento de activación de la alerta
+timestamp_sismo: float = 0
+
+# True si el evento activo es un simulacro (flujo simplificado: solo alarma)
+sismo_es_simulacro: bool = False
+

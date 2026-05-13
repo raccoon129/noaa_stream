@@ -295,3 +295,71 @@ def guardar_prompt_en_bd(reporte_id: int, texto_prompt: str):
     finally:
         if conexion.is_connected():
             conexion.close()
+
+
+# ==========================================
+#   CONDICIONES ESPECIALES (SISMOS, ETC.)
+# ==========================================
+
+def guardar_condicion_especial(datos_evento: dict) -> Optional[int]:
+    """
+    Inserta un nuevo registro en la tabla condiciones_especiales.
+    Retorna el ID generado o None si hay error.
+    """
+    conexion = obtener_conexion_bd()
+    if not conexion:
+        return None
+
+    try:
+        cursor = conexion.cursor()
+        sql = """
+            INSERT INTO condiciones_especiales (
+                timestamp_evento, tipo, subtipo, descripcion, ubicacion, latitud, longitud,
+                datos_sassla, datos_ssn, datos_investigacion,
+                guion_inmediato, prompt_inmediato, modelo_ia_usado
+            ) VALUES (
+                %(timestamp_evento)s, %(tipo)s, %(subtipo)s, %(descripcion)s, %(ubicacion)s, %(latitud)s, %(longitud)s,
+                %(datos_sassla)s, %(datos_ssn)s, %(datos_investigacion)s,
+                %(guion_inmediato)s, %(prompt_inmediato)s, %(modelo_ia_usado)s
+            )
+        """
+        cursor.execute(sql, datos_evento)
+        conexion.commit()
+        nuevo_id = cursor.lastrowid
+        print(f"[BD] - {estado.ts()} ✅ Evento '{datos_evento.get('tipo')}' registrado en BD (ID: {nuevo_id})")
+        cursor.close()
+        return nuevo_id
+    except ErrorMySQL as e:
+        print(f"[BD] - {estado.ts()} ⚠️ Error al registrar condición especial: {e}")
+        return None
+    finally:
+        if conexion.is_connected():
+            conexion.close()
+
+def actualizar_condicion_especial(evento_id: int, campos_actualizar: dict):
+    """
+    Actualiza campos específicos de un registro en condiciones_especiales (ej: guion_analisis, datos_investigacion).
+    """
+    conexion = obtener_conexion_bd()
+    if not conexion:
+        return
+
+    try:
+        cursor = conexion.cursor()
+        
+        # Construir el SET clause dinámicamente
+        set_clause = ", ".join([f"{key} = %s" for key in campos_actualizar.keys()])
+        valores = list(campos_actualizar.values())
+        valores.append(evento_id)
+        
+        sql = f"UPDATE condiciones_especiales SET {set_clause} WHERE id = %s"
+        
+        cursor.execute(sql, valores)
+        conexion.commit()
+        print(f"[BD] - {estado.ts()} ✅ Evento especial actualizado en BD (ID: {evento_id})")
+        cursor.close()
+    except ErrorMySQL as e:
+        print(f"[BD] - {estado.ts()} ⚠️ Error al actualizar condición especial: {e}")
+    finally:
+        if conexion.is_connected():
+            conexion.close()
