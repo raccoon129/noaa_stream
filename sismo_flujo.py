@@ -1,4 +1,11 @@
 # sismo_flujo.py — Orquestación del flujo sísmico (alerta + enriquecimiento)
+# rev 15.3.1
+# rev anterior: rev 15.3.0
+# Changelog:
+#   15.3.1 — Llamadas a bd.guardar_condicion_especial() actualizadas: datos_sassla →
+#            datos_fuente_primaria, datos_ssn → datos_fuente_secundaria; se agrega
+#            fuente_alerta="SASSLA". usgs_tsunami incluido en datos_investigacion
+#            (faltaba en el INSERT del sismo real). Requiere migration_v17.sql en BD.
 
 import datetime
 import json
@@ -84,19 +91,20 @@ def flujo_alerta_sismica():
         # Registrar en BD
         try:
             bd.guardar_condicion_especial({
-                "timestamp_evento": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                "tipo": "SIMULACRO",
-                "subtipo": "Simulacro programado",
-                "descripcion": "Alarma de simulacro reproducida",
-                "ubicacion": None,
-                "latitud": None,
-                "longitud": None,
-                "datos_sassla": json.dumps(estado.datos_sismo or {}),
-                "datos_ssn": None,
-                "datos_investigacion": None,
-                "guion_inmediato": None,
-                "prompt_inmediato": None,
-                "modelo_ia_usado": None
+                "timestamp_evento":      datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "tipo":                  "SIMULACRO",
+                "subtipo":               "Simulacro programado",
+                "descripcion":           "Alarma de simulacro reproducida",
+                "ubicacion":             None,
+                "latitud":               None,
+                "longitud":              None,
+                "fuente_alerta":         "SASSLA",
+                "datos_fuente_primaria":    json.dumps(estado.datos_sismo or {}),
+                "datos_fuente_secundaria":  None,
+                "datos_investigacion":   None,
+                "guion_inmediato":       None,
+                "prompt_inmediato":      None,
+                "modelo_ia_usado":       None
             })
         except Exception as e:
             print(f"[SISMO] - {estado.ts()} ⚠️ Error guardando simulacro en BD: {e}")
@@ -148,24 +156,26 @@ def flujo_alerta_sismica():
     id_bd = None
     try:
         id_bd = bd.guardar_condicion_especial({
-            "timestamp_evento": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "tipo": "SISMO",
-            "subtipo": f"Magnitud {estado.datos_sismo.get('ssn_magnitud', 'N/A')}",
-            "descripcion": f"Epicentro: {estado.datos_sismo.get('epicentro', 'Desconocido')}",
-            "ubicacion": estado.datos_sismo.get("epicentro"),
-            "latitud": estado.datos_sismo.get("ssn_latitud"),
-            "longitud": estado.datos_sismo.get("ssn_longitud"),
-            "datos_sassla": json.dumps(estado.datos_sismo),
-            "datos_ssn": None,
-            "datos_investigacion": json.dumps({
+            "timestamp_evento":      datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "tipo":                  "SISMO",
+            "subtipo":               f"Magnitud {estado.datos_sismo.get('ssn_magnitud', 'N/A')}",
+            "descripcion":           f"Epicentro: {estado.datos_sismo.get('epicentro', 'Desconocido')}",
+            "ubicacion":             estado.datos_sismo.get("epicentro"),
+            "latitud":               estado.datos_sismo.get("ssn_latitud"),
+            "longitud":              estado.datos_sismo.get("ssn_longitud"),
+            "fuente_alerta":         "SASSLA",
+            "datos_fuente_primaria":    json.dumps(estado.datos_sismo),
+            "datos_fuente_secundaria":  None,
+            "datos_investigacion":   json.dumps({
                 "usgs_magnitud": estado.datos_sismo.get("usgs_magnitud"),
                 "emsc_magnitud": estado.datos_sismo.get("emsc_magnitud"),
                 "iris_magnitud": estado.datos_sismo.get("iris_magnitud"),
-                "replicas": estado.datos_sismo.get("replicas_detectadas", 0)
+                "usgs_tsunami":  estado.datos_sismo.get("usgs_tsunami"),
+                "replicas":      estado.datos_sismo.get("replicas_detectadas", 0)
             }),
-            "guion_inmediato": texto_guion,
-            "prompt_inmediato": prompt_txt,
-            "modelo_ia_usado": modelo
+            "guion_inmediato":       texto_guion,
+            "prompt_inmediato":      prompt_txt,
+            "modelo_ia_usado":       modelo
         })
     except Exception as e:
         print(f"[SISMO] - {estado.ts()} ⚠️ Error guardando sismo en BD: {e}")

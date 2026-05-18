@@ -1,12 +1,22 @@
-# rev 15.1.0
-# rev anterior: rev 15.0.0
+# rev 16.1.0
+# rev anterior: rev 16.0.0
 # Changelog:
+#   16.1.0 — cape_etiqueta ahora requiere DOBLE condición: cape_max >= 300
+#            Y lluvia_relevante = True. Sin señal de lluvia el CAPE no tiene
+#            valor narrativo para Huichapan (~2108 m). cape_relevante derivado
+#            de cape_etiqueta (no None) en lugar de condición independiente.
+#            Docstring de _extraer_forecast actualizado.
+#   16.0.0 — OWM extendido: grnd_level, wind_deg, sunrise_ts/sunset_ts (unix),
+#            weather_id_etiqueta (alerta de fenómeno severo). Nueva función
+#            _etiqueta_weather_id() que mapea códigos OWM a etiquetas de alerta.
+#            Nueva función _etiqueta_helada() para isoterma de congelación.
+#            Open-Meteo Forecast extendido: dewpoint_2m y freezing_level_height
+#            añadidos al request (mismo endpoint, sin petición adicional).
+#            _extraer_forecast() procesa y expone dew_point y freezing_level_m.
 #   15.1.0 — Nuevos campos OWM: pressure, wind_speed_kmh, wind_gust_kmh, clouds_all,
 #            weather_id. AQI extendido: aerosol_optical_depth. Nueva fuente:
 #            Open-Meteo Forecast horario (precipitation_probability, precipitation,
-#            windspeed_10m, cape). Pre-procesamiento completo del forecast en Python
-#            antes de llegar al prompt: solo se extraen valores relevantes de la
-#            ventana de las próximas 6 horas desde la hora actual.
+#            windspeed_10m, cape). Pre-procesamiento en Python antes del prompt.
 #            Anotaciones de tipo migradas a Optional/Tuple de typing
 #            para compatibilidad con Python 3.9 (Raspberry Pi OS).
 
@@ -104,6 +114,7 @@ def obtener_forecast_horario():
         f"https://api.open-meteo.com/v1/forecast"
         f"?latitude={config.LATITUD}&longitude={config.LONGITUD}"
         f"&hourly=precipitation_probability,precipitation,windspeed_10m,cape"
+        f",dewpoint_2m,freezing_level_height"
         f"&forecast_days=2"
         f"&timezone=America%2FMexico_City"
     )
@@ -125,11 +136,34 @@ def obtener_forecast_horario():
 #   EXTRACCIÓN DE CAMPOS OWM
 # ==========================================
 
+def _etiqueta_weather_id(weather_id):
+    """
+    Mapea el código numérico weather[0].id de OWM a una etiqueta de alerta.
+    Retorna None cuando no hay fenómeno especial que reportar.
+    Solo cubre rangos con valor narrativo real para Huichapan.
+    """
+    if weather_id is None:
+        return None
+    if 200 <= weather_id <= 232:
+        return "tormenta_electrica"
+    if weather_id == 511:
+        return "lluvia_helada"
+    if 600 <= weather_id <= 622:
+        return "nieve"
+    if weather_id == 701:   # neblina
+        return "niebla"
+    if weather_id == 741:   # niebla densa
+        return "niebla"
+    if weather_id == 781:
+        return "tornado"
+    return None
+
+
 def _extraer_owm(datos_owm):
     """
-    Normaliza los campos relevantes de la respuesta cruda de OWM
-    en un dict de tipos nativos.
-    Incluye: pressure, wind_speed_kmh, wind_gust_kmh, clouds_all, weather_id.
+    Normaliza los campos relevantes de la respuesta cruda de OWM.
+    v16: añade grnd_level, wind_deg, sunrise_ts/sunset_ts (unix) y
+         weather_id_etiqueta (etiqueta de alerta de fenómeno severo).
     """
     temp        = datos_owm["main"].get("temp")
     feels       = datos_owm["main"].get("feels_like")
@@ -137,11 +171,13 @@ def _extraer_owm(datos_owm):
     desc        = datos_owm["weather"][0]["description"]
     visibilidad = (datos_owm.get("visibility", 10000)) / 1000
     pressure    = datos_owm["main"].get("pressure")
+    grnd_level  = datos_owm["main"].get("grnd_level")   # presión al nivel del suelo (hPa)
     weather_id  = datos_owm["weather"][0].get("id")
 
     # Viento: OWM entrega m/s, se convierte a km/h
     wind_speed_ms  = datos_owm.get("wind", {}).get("speed", 0)
     wind_gust_ms   = datos_owm.get("wind", {}).get("gust")
+    wind_deg       = datos_owm.get("wind", {}).get("deg")  # dirección en grados
     wind_speed_kmh = round(wind_speed_ms * 3.6, 1)
     wind_gust_kmh  = round(wind_gust_ms * 3.6, 1) if wind_gust_ms is not None else None
 
@@ -154,24 +190,33 @@ def _extraer_owm(datos_owm):
 
     amanecer_str  = "N/D"
     atardecer_str = "N/D"
+    sunrise_ts    = None   # unix timestamp para cálculo de modo_nocturno
+    sunset_ts     = None
     if "sys" in datos_owm:
-        amanecer_str  = datetime.datetime.fromtimestamp(datos_owm["sys"]["sunrise"]).strftime("%H:%M")
-        atardecer_str = datetime.datetime.fromtimestamp(datos_owm["sys"]["sunset"]).strftime("%H:%M")
+        sunrise_ts    = datos_owm["sys"]["sunrise"]
+        sunset_ts     = datos_owm["sys"]["sunset"]
+        amanecer_str  = datetime.datetime.fromtimestamp(sunrise_ts).strftime("%H:%M")
+        atardecer_str = datetime.datetime.fromtimestamp(sunset_ts).strftime("%H:%M")
 
     return {
-        "temp":           temp,
-        "feels":          feels,
-        "humedad":        humedad,
-        "desc":           desc,
-        "visibilidad":    visibilidad,
-        "lluvia_1h":      lluvia_1h,
-        "amanecer":       amanecer_str,
-        "atardecer":      atardecer_str,
-        "pressure":       pressure,
-        "wind_speed_kmh": wind_speed_kmh,
-        "wind_gust_kmh":  wind_gust_kmh,
-        "clouds_all":     clouds_all,
-        "weather_id":     weather_id,
+        "temp":              temp,
+        "feels":             feels,
+        "humedad":           humedad,
+        "desc":              desc,
+        "visibilidad":       visibilidad,
+        "lluvia_1h":         lluvia_1h,
+        "amanecer":          amanecer_str,
+        "atardecer":         atardecer_str,
+        "sunrise_ts":        sunrise_ts,
+        "sunset_ts":         sunset_ts,
+        "pressure":          pressure,
+        "grnd_level":        grnd_level,
+        "wind_speed_kmh":    wind_speed_kmh,
+        "wind_gust_kmh":     wind_gust_kmh,
+        "wind_deg":          wind_deg,
+        "clouds_all":        clouds_all,
+        "weather_id":        weather_id,
+        "weather_id_etiqueta": _etiqueta_weather_id(weather_id),
     }
 
 
@@ -239,10 +284,31 @@ def _etiqueta_aod(aod):
 #   EXTRACCIÓN Y PRE-PROCESAMIENTO DEL FORECAST
 # ==========================================
 
+def _etiqueta_helada(freezing_level_m, altitud_estacion_m=2108):
+    """
+    Evalúa si la isoterma de 0°C se aproxima a la altitud de la estación.
+    Retorna una etiqueta de alerta o None si no hay riesgo.
+    La estación está a ~2,108 m (Huichapan); configurable si se mueve.
+    """
+    if freezing_level_m is None:
+        return None
+    margen = freezing_level_m - altitud_estacion_m
+    if margen <= 0:
+        return "helada_severa"        # isoterma por debajo de la estación
+    if margen <= 300:
+        return "riesgo_helada"        # isoterma a 300 m sobre la estación
+    if margen <= 700:
+        return "isoterma_cercana"     # watch, sin alerta inmediata
+    return None
+
+
 def _extraer_forecast(datos_fc, hora_actual):
     """
     A partir de la respuesta cruda del forecast horario, extrae y pre-procesa
     únicamente la ventana de las próximas 6 horas desde hora_actual.
+
+    v16: añade dew_point (°C, promedio de la ventana) y freezing_level_m
+         (mínimo de la ventana) con su etiqueta de alerta de helada.
 
     Retorna un dict con:
         prob_lluvia_max   — probabilidad máxima de lluvia en la ventana (%)
@@ -253,17 +319,23 @@ def _extraer_forecast(datos_fc, hora_actual):
         hora_viento_max   — hora (int, 0-23) del viento máximo
         cape_max          — CAPE máximo en la ventana (J/kg)
         hora_cape_max     — hora (int, 0-23) del CAPE máximo
-        cape_etiqueta     — etiqueta interpretativa del CAPE, o None si < 300
+        cape_etiqueta     — etiqueta interpretativa del CAPE, o None si cape_max < 300
+                            O si lluvia_relevante es False (sin lluvia, el CAPE no es narrativo)
         lluvia_relevante  — True si prob_lluvia_max >= 20
         viento_relevante  — True si (viento_max - viento_actual) >= 8 km/h
-        cape_relevante    — True si cape_max >= 300 Y lluvia_relevante es True
+        cape_relevante    — True si cape_etiqueta no es None (cape_max >= 300 Y lluvia_relevante)
+        dew_point         — punto de rocío promedio en la ventana (°C), o None
+        freezing_level_m  — isoterma 0°C mínima en la ventana (m), o None
+        helada_etiqueta   — etiqueta de alerta de helada, o None
     """
-    horario = datos_fc.get("hourly", {})
-    tiempos = horario.get("time", [])
-    probs   = horario.get("precipitation_probability", [])
-    precs   = horario.get("precipitation", [])
-    vientos = horario.get("windspeed_10m", [])
-    capes   = horario.get("cape", [])
+    horario  = datos_fc.get("hourly", {})
+    tiempos  = horario.get("time", [])
+    probs    = horario.get("precipitation_probability", [])
+    precs    = horario.get("precipitation", [])
+    vientos  = horario.get("windspeed_10m", [])
+    capes    = horario.get("cape", [])
+    dewpts   = horario.get("dewpoint_2m", [])
+    freezing = horario.get("freezing_level_height", [])
 
     # Identificar el índice de la hora actual en la serie
     fecha_hoy     = datetime.datetime.now().strftime("%Y-%m-%d")
@@ -286,11 +358,13 @@ def _extraer_forecast(datos_fc, hora_actual):
 
     # Ventana: hora actual + 5 horas siguientes (6 puntos máximo)
     fin = min(indice_actual + 6, len(tiempos))
-    ventana_probs   = probs[indice_actual:fin]
-    ventana_precs   = precs[indice_actual:fin]
-    ventana_vientos = vientos[indice_actual:fin]
-    ventana_capes   = capes[indice_actual:fin]
-    ventana_tiempos = tiempos[indice_actual:fin]
+    ventana_probs    = probs[indice_actual:fin]
+    ventana_precs    = precs[indice_actual:fin]
+    ventana_vientos  = vientos[indice_actual:fin]
+    ventana_capes    = capes[indice_actual:fin]
+    ventana_tiempos  = tiempos[indice_actual:fin]
+    ventana_dewpts   = dewpts[indice_actual:fin]   if dewpts   else []
+    ventana_freezing = freezing[indice_actual:fin] if freezing else []
 
     if not ventana_probs:
         return _forecast_vacio()
@@ -312,9 +386,16 @@ def _extraer_forecast(datos_fc, hora_actual):
     idx_cape  = ventana_capes.index(cape_max) if ventana_capes else 0
     hora_cape = int(ventana_tiempos[idx_cape][11:13])
 
-    # Etiqueta CAPE según escala estándar
+    lluvia_relevante = prob_max >= 20
+    viento_relevante = (viento_max - viento_actual) >= 8
+
+    # Etiqueta CAPE: solo se asigna si hay lluvia proyectada significativa.
+    # Sin señal de lluvia, el CAPE no tiene valor narrativo sin importar su magnitud.
+    # Un CAPE de 500-800 J/kg sin lluvia proyectada es normal en zonas de altitud
+    # elevada (Huichapan, ~2108 m) y no indica riesgo real de tormenta.
     cape_etiqueta = None
-    if cape_max >= 300:
+    if cape_max >= 300 and lluvia_relevante:
+        # cape_etiqueta = None  # rev 16.1.0: condición anterior (solo cape_max >= 300)
         if cape_max < 1000:
             cape_etiqueta = "rango moderado (300-1000 J/kg): tormentas débiles posibles"
         elif cape_max < 2500:
@@ -322,10 +403,15 @@ def _extraer_forecast(datos_fc, hora_actual):
         else:
             cape_etiqueta = "rango muy alto (>2500 J/kg): tormentas severas"
 
-    lluvia_relevante = prob_max >= 20
-    viento_relevante = (viento_max - viento_actual) >= 8
-    # CAPE solo es narrativamente relevante cuando también hay señal de lluvia
-    cape_relevante   = cape_max >= 300 and lluvia_relevante
+    # CAPE narrativamente relevante: magnitud Y lluvia presentes simultáneamente
+    cape_relevante = cape_etiqueta is not None
+
+    # --- Punto de rocío (promedio de la ventana) ---
+    dew_point = round(sum(ventana_dewpts) / len(ventana_dewpts), 1) if ventana_dewpts else None
+
+    # --- Isoterma de congelación (valor mínimo = más cercano a la superficie) ---
+    freezing_level_m = min(ventana_freezing) if ventana_freezing else None
+    helada_etiqueta  = _etiqueta_helada(freezing_level_m)
 
     return {
         "prob_lluvia_max":  prob_max,
@@ -340,6 +426,9 @@ def _extraer_forecast(datos_fc, hora_actual):
         "lluvia_relevante": lluvia_relevante,
         "viento_relevante": viento_relevante,
         "cape_relevante":   cape_relevante,
+        "dew_point":        dew_point,
+        "freezing_level_m": freezing_level_m,
+        "helada_etiqueta":  helada_etiqueta,
     }
 
 
@@ -358,6 +447,9 @@ def _forecast_vacio():
         "lluvia_relevante": False,
         "viento_relevante": False,
         "cape_relevante":   False,
+        "dew_point":        None,
+        "freezing_level_m": None,
+        "helada_etiqueta":  None,
     }
 
 

@@ -1,13 +1,14 @@
-# rev 15.1.0
-# rev anterior: rev 15.0.0
+# rev 16.1.0
+# rev anterior: rev 16.0.0
 # Changelog:
-#   15.1.0 — Anotaciones de tipo migradas a Optional/Tuple de typing
-#            para compatibilidad con Python 3.9 (Raspberry Pi OS).
-#   15.0.0 — Módulo refactorizado. Se conserva la lógica de recuperación del
-#            webservice CONAGUA/SMN y se añade la extracción y normalización
-#            de todos los campos relevantes (hoy y mañana) en un dict
-#            estructurado listo para usar en prompt.py y meteorologo.py.
-#            Los parámetros de localización se leen desde config.py.
+#   16.1.0 — Se eliminan obtener_pronostico_horario() y funciones auxiliares
+#            de method=3 (CONAGUA horario): demasiado pesadas para el hardware.
+#            Solo permanece obtener_pronostico() (method=1, pronóstico diario).
+#   16.0.0 — _extraer_dia() extiende campos: cc (nubosidad %), dirvieng (grados),
+#            dloc (timestamp). obtener_pronostico() expone campos completos de
+#            mañana. Se añadió obtener_pronostico_horario() (method=3) — retirado.
+#   15.1.0 — Anotaciones de tipo migradas a Optional/Tuple de typing.
+#   15.0.0 — Módulo refactorizado.
 
 import gzip
 import io
@@ -83,8 +84,8 @@ def _num(valor):
 
 def _extraer_dia(registro):
     """
-    Extrae y normaliza todos los campos de un registro diario del SMN
-    en un diccionario de tipos nativos (float/str/None).
+    Extrae y normaliza todos los campos de un registro diario del SMN.
+    v16: añade cc (nubosidad %), dirvieng (dirección en grados) y dloc (timestamp).
     """
     return {
         "condicion":     registro.get("desciel"),
@@ -94,7 +95,10 @@ def _extraer_dia(registro):
         "precipitacion": _num(registro.get("prec", 0)),
         "viento":        _num(registro.get("velvien")),
         "dir_viento":    registro.get("dirvienc"),
+        "dirvieng":      _num(registro.get("dirvieng")),
         "rafagas":       _num(registro.get("raf")),
+        "cc":            _num(registro.get("cc")),
+        "dloc":          registro.get("dloc"),
     }
 
 
@@ -108,13 +112,14 @@ def obtener_pronostico(
 ):
     # type: (...) -> Optional[dict]
     """
-    Recupera y extrae el pronóstico de hoy y mañana del SMN/CONAGUA.
+    Recupera y extrae el pronóstico de hoy y mañana del SMN/CONAGUA (method=1).
+    v16: mañana incluye campos completos (prob_lluvia, precipitacion, viento, etc.).
 
     Retorna un dict con la estructura:
         {
-            "hoy":    { condicion, temp_max, temp_min, prob_lluvia,
-                        precipitacion, viento, dir_viento, rafagas },
-            "manana": { condicion, temp_max, temp_min, ... } o None
+            "hoy":    { condicion, temp_max, temp_min, prob_lluvia, precipitacion,
+                        viento, dir_viento, dirvieng, rafagas, cc, dloc },
+            "manana": { idénticos campos } o None
         }
     Retorna None si no fue posible obtener ningún dato.
     """
@@ -126,3 +131,4 @@ def obtener_pronostico(
     manana = _extraer_dia(registros[1]) if len(registros) > 1 else None
 
     return {"hoy": hoy, "manana": manana}
+

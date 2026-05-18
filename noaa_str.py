@@ -1,21 +1,12 @@
-# rev 15.1.5
-# rev anterior: rev 15.1.4
+# rev 16.1.0
+# rev anterior: rev 16.0.0
 # Changelog:
+#   16.1.0 — Se retira conagua.obtener_pronostico_horario() (method=3 suspendido
+#            por rendimiento en hardware). Se elimina rocio_relevante. modo_nocturno
+#            se conserva: se calcula desde sunset_ts de OWM y controla la perspectiva
+#            ampliada de mañana en el prompt (CONAGUA method=1 sigue activo).
+#   16.0.0 — Llama a method=3, calcula modo_nocturno y rocio_relevante desde OWM.
 #   15.1.5 — datos_para_bd reestructurado para el esquema normalizado por fuente.
-#            Los campos cna_*/owm_*/aqm_* se reemplazan por sub-dicts "conagua",
-#            "owm" y "aqi" que bd.guardar_reporte_en_bd distribuye a sus tablas
-#            hijas (datos_conagua, datos_owm, datos_openmeteo). Ningún otro
-#            comportamiento fue modificado.
-#   15.1.3 — Se lanza el watchdog de dj.py al arrancar la estación para
-#            detectar y recuperar caídas silenciosas del pipeline de audio.
-#   15.1.0 — Se pasa el dict forecast a construir_prompt para integrar
-#            los datos del pronóstico horario de Open-Meteo en el guion.
-#   15.0.0 — Refactorización modular completa. Este archivo es el único punto
-#            de entrada de la estación. Orquesta: recolección meteorológica
-#            (meteorologo + conagua), construcción del prompt (prompt),
-#            generación del guion (ia), síntesis de voz (tts), persistencia
-#            en BD (bd) y el bucle de transmisión (dj).
-#            La funcionalidad es idéntica a la rev 14.9.2.
 
 import datetime
 import os
@@ -61,7 +52,7 @@ def actualizar_audio_clima():
         # 1. Recolección de fuentes
         # --------------------------------------------------
 
-        # CONAGUA
+        # CONAGUA diario (method=1)
         error_conagua  = None
         datos_conagua  = None
         try:
@@ -93,10 +84,18 @@ def actualizar_audio_clima():
             return
 
         # --------------------------------------------------
-        # 3. Timestamp del ciclo
+        # 3. Timestamp + flags modo_nocturno y rocio_relevante
         # --------------------------------------------------
         fecha_exacta = time.strftime("%Y-%m-%d")
         hora_exacta  = time.strftime("%H:%M")
+
+        modo_nocturno = False
+        if owm:
+            import datetime as _dt
+            ahora_ts  = _dt.datetime.now().timestamp()
+            sunset_ts = owm.get("sunset_ts")
+            if sunset_ts:
+                modo_nocturno = ahora_ts >= sunset_ts
 
         # --------------------------------------------------
         # 4. JSON del monitor web
@@ -114,7 +113,9 @@ def actualizar_audio_clima():
         elif estado.sismo_activo:
             contexto = estado.datos_sismo
         texto_prompt = prompt.construir_prompt(
-            datos_conagua, owm, aqi, datos_met["forecast"], contexto_sismo=contexto
+            datos_conagua, owm, aqi, datos_met["forecast"],
+            contexto_sismo=contexto,
+            modo_nocturno=modo_nocturno,
         )
 
         # --------------------------------------------------
@@ -153,20 +154,33 @@ def actualizar_audio_clima():
                 "viento":        cna_hoy.get("viento")        if cna_hoy else None,
                 "dir_viento":    cna_hoy.get("dir_viento")    if cna_hoy else None,
                 "rafagas":       cna_hoy.get("rafagas")       if cna_hoy else None,
-                "man_condicion": cna_manana.get("condicion")  if cna_manana else None,
-                "man_temp_max":  cna_manana.get("temp_max")   if cna_manana else None,
-                "man_temp_min":  cna_manana.get("temp_min")   if cna_manana else None,
+                "cc":            cna_hoy.get("cc")            if cna_hoy else None,
+                "dirvieng":      cna_hoy.get("dirvieng")      if cna_hoy else None,
+                "dloc":          cna_hoy.get("dloc")          if cna_hoy else None,
+
+                "man_condicion":     cna_manana.get("condicion")     if cna_manana else None,
+                "man_temp_max":      cna_manana.get("temp_max")      if cna_manana else None,
+                "man_temp_min":      cna_manana.get("temp_min")      if cna_manana else None,
+                "man_prob_lluvia":   cna_manana.get("prob_lluvia")   if cna_manana else None,
+                "man_precipitacion": cna_manana.get("precipitacion") if cna_manana else None,
+                "man_viento":        cna_manana.get("viento")        if cna_manana else None,
+                "man_rafagas":       cna_manana.get("rafagas")       if cna_manana else None,
+                "man_dir_viento":    cna_manana.get("dir_viento")    if cna_manana else None,
+                "man_cc":            cna_manana.get("cc")            if cna_manana else None,
             } if datos_conagua else None,
 
             # Sub-dict OWM: None si no respondió → bd.py no insertará en datos_owm
-            "owm": owm,  # dict ya extraído por meteorologo._extraer_owm, o None
+            "owm": owm,
 
             # Sub-dict Open-Meteo AQI: None si no respondió → bd.py no insertará en datos_openmeteo
-            "aqi": aqi,  # dict ya extraído por meteorologo._extraer_aqi, o None
+            "aqi": aqi,
+            # Sub-dict Open-Meteo Forecast: None si falló (evita insertar forecast_vacio en BD)
+            "forecast": datos_met.get("forecast") if datos_met.get("disponible_fc") else None,
         }
 
         # --------------------------------------------------
         # 8. Persistencia en BD (hilo secundario para no bloquear el audio)
+
         # --------------------------------------------------
         def _tarea_bd(datos_r, datos_w, p_texto):
             id_generado = bd.guardar_reporte_en_bd(datos_r)

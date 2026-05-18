@@ -34,8 +34,8 @@ OWM_API_KEY = "TU_API_KEY_OWM"             # Ver sección 2
 # ==========================================
 
 GEMINI_API_KEY        = "TU_API_KEY_GEMINI" # Ver sección 3
-MODELO_GEMINI          = "gemini-2.0-flash"
-MODELO_GEMINI_RESPALDO = "gemini-2.0-flash-lite"
+MODELO_GEMINI          = "gemini-3-flash-preview"
+MODELO_GEMINI_RESPALDO = "gemini-3.1-flash-lite"
 
 GROQ_API_KEY = "TU_API_KEY_GROQ"           # Ver sección 3
 MODELO_GROQ  = "llama-3.3-70b-versatile"
@@ -74,9 +74,10 @@ ARCHIVO_TEXTO     = "guion.txt"
 ARCHIVO_DATOS_WEB = "datos.json"
 
 # ==========================================
-#   STREAM DE AUDIO — Icecast
+#   STREAM DE AUDIO
 # ==========================================
 
+# --- Icecast (transmisión a internet) ---
 ICECAST_HOST       = "localhost"             # Ver sección 6
 ICECAST_PORT       = 8000
 ICECAST_MOUNTPOINT = "/stream"
@@ -84,27 +85,55 @@ ICECAST_PASSWORD   = "TU_CONTRASEÑA_ICECAST"
 ICECAST_USER       = "source"
 ICECAST_BITRATE_K  = 16
 
-# ==========================================
-#   TRANSMISIÓN FM (pi_fm_rds) — OPCIONAL
-# ==========================================
-
-FM_HABILITADO = False                        # Ver sección 7
-FM_EJECUTABLE = "./pi_fm_rds"
-FM_PS         = "NOAA Str"
-FM_RT         = "Reporte del Clima Actual - Laboratorio"
+# --- Bluetooth (salida de audio local) ---
+BT_HABILITADO         = False                        # Ver sección 7
+BT_DISPOSITIVO        = "bluealsa:DEV=XX:XX:XX:XX:XX:XX,PROFILE=a2dp"
+BT_SAMPLE_RATE_SALIDA = 22050
 
 # ==========================================
 #   SCHEDULER DE ACTUALIZACIONES
 # ==========================================
 
 HORAS_PROGRAMADAS = [                        # Ver sección 8
-    "06:01", "06:30", "07:00", "07:30", "08:00", "08:30",
+    "03:00", "05:00", "06:01", "06:30", "07:00", "07:30", "08:00", "08:30",
     "09:00", "09:30", "10:00", "10:30", "11:00", "11:30", "12:00",
     "12:30", "13:00", "13:30", "14:00", "14:30", "15:00", "15:30",
     "16:00", "16:30", "17:00", "17:30", "18:00", "18:30", "19:00",
     "19:30", "20:00", "20:30", "21:00", "21:30", "22:00", "22:30",
-    "23:00", "23:30", "00:01",
+    "23:00", "23:30", "00:01"
 ]
+
+# ==========================================
+#   CONFIGURACIÓN SÍSMICA
+# ==========================================
+
+# --- Telegram (Telethon) ---
+TELEGRAM_API_ID   = TU_API_ID               # Ver sección 9
+TELEGRAM_API_HASH = "TU_API_HASH"
+TELEGRAM_CANAL    = "sassla"
+
+# --- Alerta sonora ---
+ARCHIVO_ALERTA_SISMICA  = "alerta_sismica.wav"
+ARCHIVO_SILENCIO        = "silencio.wav"
+ARCHIVO_SISMO_REPORTE   = "sismo_reporte.wav"
+ARCHIVO_SISMO_ESPERA    = "sismo_espera.wav"
+ARCHIVO_SISMO_LOCAL     = "ultimo_sismo.json"
+REPETICIONES_SISMO_REAL = 15
+REPETICIONES_SIMULACRO  = 9
+CICLOS_ENRIQUECIMIENTO  = 4
+
+# --- Consultas post-evento ---
+SSN_RSS_URL             = "http://www.ssn.unam.mx/rss/ultimos-sismos.xml"
+
+# --- Bounding box México para consultas USGS ---
+SISMO_MIN_LAT = 14.0
+SISMO_MAX_LAT = 20.0
+SISMO_MIN_LON = -106.0
+SISMO_MAX_LON = -92.0
+SISMO_MIN_MAG = 3.5
+
+# --- Calendario de simulacros ---
+ARCHIVO_SIMULACROS = "simulacros.json"
 ```
 
 ---
@@ -156,9 +185,9 @@ HORAS_PROGRAMADAS = [                        # Ver sección 8
 
 | Modelo | Velocidad | Calidad | Uso recomendado |
 |---|---|---|---|
-| `gemini-2.0-flash` | Rápido | Alta | Producción (principal) |
-| `gemini-2.0-flash-lite` | Muy rápido | Media | Respaldo / bajo costo |
-| `gemini-2.5-pro-preview-05-06` | Lento | Muy alta | Pruebas de calidad |
+| `gemini-3-flash-preview` | Rápido | Alta | Producción (principal) |
+| `gemini-3.1-flash-lite` | Muy rápido | Media | Respaldo / bajo costo |
+| `gemini-3.1-pro` | Lento | Muy alta | Pruebas de calidad |
 
 ### Groq
 
@@ -219,7 +248,7 @@ edge-tts --list-voices | grep "^es-"
 
 ---
 
-## Sección 6 — Stream de audio (Icecast)
+## Sección 6 — Stream de audio
 
 | Parámetro | Descripción | Valor típico |
 |---|---|---|
@@ -235,17 +264,16 @@ edge-tts --list-voices | grep "^es-"
 
 ---
 
-## Sección 7 — Transmisión FM con pi_fm_rds (opcional)
+## Sección 7 — Salida Bluetooth (para transmisor FM)
 
 | Parámetro | Descripción |
 |---|---|
-| `FM_HABILITADO` | `True` para activar la transmisión FM via `pi_fm_rds`; `False` para desactivarla. |
-| `FM_EJECUTABLE` | Ruta al binario compilado de `pi_fm_rds`. |
-| `FM_PS` | *Programme Service Name* (máx. 8 caracteres) visible en radios con RDS. |
-| `FM_RT` | *Radio Text* (máx. 64 caracteres) visible en radios con RDS. |
+| `BT_HABILITADO` | `True` para activar la salida de audio a un dispositivo Bluetooth vía ALSA/BlueALSA; `False` para desactivarla. |
+| `BT_DISPOSITIVO` | Nombre del sink ALSA del transmisor FM BT ya emparejado. Formato BlueALSA típico: `"bluealsa:DEV=XX:XX:XX:XX:XX:XX,PROFILE=a2dp"`. |
+| `BT_SAMPLE_RATE_SALIDA` | Frecuencia de muestreo para la rama BT. Se recomienda usar `22050` (mismo que el pipeline) para evitar resampleo. |
 
-> [!WARNING]
-> `pi_fm_rds` requiere hardware GPIO de Raspberry Pi y permisos de superusuario (`sudo`). En cualquier otra plataforma deja `FM_HABILITADO = False`.
+> [!NOTE]
+> El emparejamiento del dispositivo Bluetooth se realiza una sola vez con `bluetoothctl` a nivel del sistema operativo.
 
 ---
 
@@ -259,6 +287,21 @@ Lista de horarios en formato `"HH:MM"` (24 h) en los que el sistema generará y 
 
 > [!TIP]
 > Para evitar sobrecarga de APIs durante horas de madrugada, puedes reducir la frecuencia fuera del horario pico (ej. dejar solo `"03:00"` y `"05:00"` entre la medianoche y las 6 AM).
+
+---
+
+## Sección 9 — Configuración Sísmica
+
+| Parámetro | Descripción |
+|---|---|
+| `TELEGRAM_API_ID` | Tu API ID de Telegram (entero). Obtener en https://my.telegram.org → API development tools. |
+| `TELEGRAM_API_HASH` | Tu API Hash de Telegram (cadena de texto). |
+| `TELEGRAM_CANAL` | Canal público a monitorear para alertas sísmicas (ej. `"sassla"`). |
+| `REPETICIONES_SISMO_REAL` | Número de repeticiones del sonido de alerta para sismos reales. |
+| `REPETICIONES_SIMULACRO` | Número de repeticiones del sonido de alerta para simulacros. |
+| `CICLOS_ENRIQUECIMIENTO` | Número de ciclos de reporte en los que se re-consultan las APIs sísmicas para actualizar magnitud/epicentro. |
+| Bounding box (`SISMO_*`) | Coordenadas y magnitud mínima para filtrar sismos del USGS que afecten el área de interés. |
+| `ARCHIVO_SIMULACROS` | Archivo JSON con las fechas y horas de simulacros programados. |
 
 ---
 

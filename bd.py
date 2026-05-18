@@ -1,19 +1,20 @@
-# rev 15.2.0
-# rev anterior: rev 15.1.0
+# rev 16.3.0
+# rev anterior: rev 16.2.0
 # Changelog:
-#   15.2.0 — Corrección: el INSERT principal de reportes_climatologicos ahora recibe
-#            un sub-dict plano en lugar del dict completo, evitando el error
-#            "Python 'dict' cannot be converted to a MySQL type" que se producía
-#            porque mysql.connector intentaba serializar las claves anidadas
-#            (conagua, owm, aqi) aunque no estuvieran en el SQL.
-#   15.1.0 — guardar_reporte_en_bd adaptado al esquema normalizado por fuente.
-#            La tabla madre (reportes_climatologicos) recibe solo metadatos y guion.
-#            Los datos meteorológicos se insertan condicionalmente en las tablas
-#            hijas datos_conagua, datos_owm y datos_openmeteo (1:0..1).
-#            La firma pública de todas las funciones permanece sin cambios.
+#   16.3.0 — guardar_condicion_especial() generalizado: datos_sassla → datos_fuente_primaria,
+#            datos_ssn → datos_fuente_secundaria. Se agrega fuente_alerta (sistema que emitió
+#            la alerta: SASSLA, CONAGUA, CENAPRED, etc.) y guion_analisis/prompt_analisis
+#            (reporte tardío post-evento). Defaults internos evitan KeyError en llamadores
+#            que no incluyan las nuevas claves. Requiere migration_v17.sql en BD.
+#   16.2.0 — datos_forecast renombrada a datos_forecast_openmeteo. FK cambia de
+#            reportes_climatologicos → datos_openmeteo (openmeteo_id). El forecast
+#            solo se persiste si datos_openmeteo fue insertado en el mismo ciclo.
+#            Se retiran datos_conagua_horario y flags_ejecucion.
+#   16.0.0 — Expande INSERT de datos_owm, datos_conagua, datos_openmeteo con
+#            nuevos campos v16. Nuevas inserciones en datos_forecast y flags.
+#   15.2.0 — Corrección: sub-dict plano para reportes_climatologicos.
+#   15.1.0 — guardar_reporte_en_bd con esquema normalizado por fuente.
 #   15.0.0 — Extracción de toda la lógica MySQL a módulo independiente.
-#            Incluye: conexión, registro de errores, guardado de reportes,
-#            resúmenes web y prompts. Sanitización de claves API en errores.
 
 import datetime
 from typing import Optional
@@ -147,21 +148,32 @@ def guardar_reporte_en_bd(datos_reporte: dict) -> Optional[int]:
                        reporte_id,
                        condicion, temp_max, temp_min, prob_lluvia, precipitacion,
                        viento, dir_viento, rafagas,
-                       man_condicion, man_temp_max, man_temp_min
+                       cc_pct, dirvieng, dloc,
+                       man_condicion, man_temp_max, man_temp_min,
+                       man_prob_lluvia, man_precipitacion, man_viento,
+                       man_rafagas, man_dir_viento, man_cc
                    ) VALUES (
                        %s,
                        %s, %s, %s, %s, %s,
+                       %s, %s, %s,
+                       %s, %s, %s,
+                       %s, %s, %s,
                        %s, %s, %s,
                        %s, %s, %s
                    )""",
                 (
                     nuevo_id,
-                    conagua.get("condicion"),    conagua.get("temp_max"),
-                    conagua.get("temp_min"),     conagua.get("prob_lluvia"),
-                    conagua.get("precipitacion"),conagua.get("viento"),
-                    conagua.get("dir_viento"),   conagua.get("rafagas"),
-                    conagua.get("man_condicion"),conagua.get("man_temp_max"),
-                    conagua.get("man_temp_min"),
+                    conagua.get("condicion"),     conagua.get("temp_max"),
+                    conagua.get("temp_min"),      conagua.get("prob_lluvia"),
+                    conagua.get("precipitacion"), conagua.get("viento"),
+                    conagua.get("dir_viento"),    conagua.get("rafagas"),
+                    conagua.get("cc"),            conagua.get("dirvieng"),
+                    conagua.get("dloc"),
+                    conagua.get("man_condicion"), conagua.get("man_temp_max"),
+                    conagua.get("man_temp_min"),  conagua.get("man_prob_lluvia"),
+                    conagua.get("man_precipitacion"), conagua.get("man_viento"),
+                    conagua.get("man_rafagas"),   conagua.get("man_dir_viento"),
+                    conagua.get("man_cc"),
                 ),
             )
             conexion.commit()
@@ -176,18 +188,28 @@ def guardar_reporte_en_bd(datos_reporte: dict) -> Optional[int]:
                 """INSERT INTO datos_owm (
                        reporte_id,
                        temp_actual, sensacion, humedad, condicion,
-                       visibilidad, lluvia_1h, amanecer, atardecer
+                       visibilidad, lluvia_1h, amanecer, atardecer,
+                       presion_hpa, presion_suelo_hpa,
+                       viento_kmh, rafagas_kmh, nubosidad_pct, wind_deg,
+                       weather_id, weather_id_etiq
                    ) VALUES (
                        %s,
                        %s, %s, %s, %s,
-                       %s, %s, %s, %s
+                       %s, %s, %s, %s,
+                       %s, %s,
+                       %s, %s, %s, %s,
+                       %s, %s
                    )""",
                 (
                     nuevo_id,
-                    owm.get("temp"),       owm.get("feels"),
-                    owm.get("humedad"),    owm.get("desc"),
-                    owm.get("visibilidad"),owm.get("lluvia_1h"),
-                    owm.get("amanecer"),   owm.get("atardecer"),
+                    owm.get("temp"),          owm.get("feels"),
+                    owm.get("humedad"),        owm.get("desc"),
+                    owm.get("visibilidad"),    owm.get("lluvia_1h"),
+                    owm.get("amanecer"),       owm.get("atardecer"),
+                    owm.get("pressure"),       owm.get("grnd_level"),
+                    owm.get("wind_speed_kmh"), owm.get("wind_gust_kmh"),
+                    owm.get("clouds_all"),     owm.get("wind_deg"),
+                    owm.get("weather_id"),     owm.get("weather_id_etiqueta"),
                 ),
             )
             conexion.commit()
@@ -196,17 +218,18 @@ def guardar_reporte_en_bd(datos_reporte: dict) -> Optional[int]:
         # ------------------------------------------------------------------
         # 4. datos_openmeteo (solo si la fuente respondió)
         # ------------------------------------------------------------------
+        openmeteo_id = None
         aqi = datos_reporte.get("aqi")
         if aqi is not None:
             cursor.execute(
                 """INSERT INTO datos_openmeteo (
                        reporte_id,
                        aqi, pm10, pm25, uv_index,
-                       co, no2, so2, ozono
+                       co, no2, so2, ozono, aod
                    ) VALUES (
                        %s,
                        %s, %s, %s, %s,
-                       %s, %s, %s, %s
+                       %s, %s, %s, %s, %s
                    )""",
                 (
                     nuevo_id,
@@ -214,10 +237,49 @@ def guardar_reporte_en_bd(datos_reporte: dict) -> Optional[int]:
                     aqi.get("pm25"),  aqi.get("uv"),
                     aqi.get("co"),    aqi.get("no2"),
                     aqi.get("so2"),   aqi.get("ozono"),
+                    aqi.get("aerosol_optical_depth"),
                 ),
             )
             conexion.commit()
-            print(f"[BD] - {estado.ts()} ✅ Datos Open-Meteo guardados (reporte_id: {nuevo_id})")
+            openmeteo_id = cursor.lastrowid
+            print(f"[BD] - {estado.ts()} ✅ Datos Open-Meteo guardados (id: {openmeteo_id}, reporte_id: {nuevo_id})")
+
+        # ------------------------------------------------------------------
+        # 5. datos_forecast_openmeteo (subtabla de datos_openmeteo)
+        #    Solo se persiste si datos_openmeteo fue insertado en este ciclo.
+        # ------------------------------------------------------------------
+        fc = datos_reporte.get("forecast")
+        if fc is not None and openmeteo_id is not None:
+            cursor.execute(
+                """INSERT INTO datos_forecast_openmeteo (
+                       openmeteo_id,
+                       prob_lluvia_max, hora_pico_lluvia, prec_total,
+                       viento_actual, viento_max, hora_viento_max,
+                       cape_max, hora_cape_max, cape_etiqueta,
+                       dew_point, freezing_level_m, helada_etiqueta
+                   ) VALUES (
+                       %s,
+                       %s, %s, %s,
+                       %s, %s, %s,
+                       %s, %s, %s,
+                       %s, %s, %s
+                   )""",
+                (
+                    openmeteo_id,
+                    fc.get("prob_lluvia_max"),  fc.get("hora_pico_lluvia"),
+                    fc.get("prec_total"),
+                    fc.get("viento_actual"),    fc.get("viento_max"),
+                    fc.get("hora_viento_max"),
+                    fc.get("cape_max"),         fc.get("hora_cape_max"),
+                    fc.get("cape_etiqueta"),
+                    fc.get("dew_point"),        fc.get("freezing_level_m"),
+                    fc.get("helada_etiqueta"),
+                ),
+            )
+            conexion.commit()
+            print(f"[BD] - {estado.ts()} ✅ Datos Forecast guardados (openmeteo_id: {openmeteo_id})")
+        elif fc is not None and openmeteo_id is None:
+            print(f"[BD] - {estado.ts()} ⚠️  Forecast omitido: datos_openmeteo no disponible en este ciclo.")
 
         cursor.close()
         return nuevo_id
@@ -305,6 +367,24 @@ def guardar_condicion_especial(datos_evento: dict) -> Optional[int]:
     """
     Inserta un nuevo registro en la tabla condiciones_especiales.
     Retorna el ID generado o None si hay error.
+
+    El dict datos_evento debe incluir las siguientes claves:
+        timestamp_evento    — str "YYYY-MM-DD HH:MM:SS"
+        tipo                — str: "SISMO", "SIMULACRO", "HELADA", "INCENDIO", etc.
+        subtipo             — str descriptivo o None
+        descripcion         — str resumen humano o None
+        ubicacion           — str o None
+        latitud             — float o None
+        longitud            — float o None
+        fuente_alerta       — str: sistema que emitió la alerta (SASSLA, CONAGUA, CENAPRED, etc.) o None
+        datos_fuente_primaria  — JSON str: datos crudos de la fuente que emitió la alerta
+        datos_fuente_secundaria — JSON str: confirmación de agencia secundaria (SSN, USGS, etc.) o None
+        datos_investigacion — JSON str: datos post-evento de fuentes adicionales o None
+        guion_inmediato     — str o None
+        prompt_inmediato    — str o None
+        guion_analisis      — str o None (reporte tardío post-evento)
+        prompt_analisis     — str o None
+        modelo_ia_usado     — str o None
     """
     conexion = obtener_conexion_bd()
     if not conexion:
@@ -315,15 +395,31 @@ def guardar_condicion_especial(datos_evento: dict) -> Optional[int]:
         sql = """
             INSERT INTO condiciones_especiales (
                 timestamp_evento, tipo, subtipo, descripcion, ubicacion, latitud, longitud,
-                datos_sassla, datos_ssn, datos_investigacion,
-                guion_inmediato, prompt_inmediato, modelo_ia_usado
+                fuente_alerta,
+                datos_fuente_primaria, datos_fuente_secundaria, datos_investigacion,
+                guion_inmediato, prompt_inmediato,
+                guion_analisis, prompt_analisis,
+                modelo_ia_usado
             ) VALUES (
-                %(timestamp_evento)s, %(tipo)s, %(subtipo)s, %(descripcion)s, %(ubicacion)s, %(latitud)s, %(longitud)s,
-                %(datos_sassla)s, %(datos_ssn)s, %(datos_investigacion)s,
-                %(guion_inmediato)s, %(prompt_inmediato)s, %(modelo_ia_usado)s
+                %(timestamp_evento)s, %(tipo)s, %(subtipo)s, %(descripcion)s,
+                %(ubicacion)s, %(latitud)s, %(longitud)s,
+                %(fuente_alerta)s,
+                %(datos_fuente_primaria)s, %(datos_fuente_secundaria)s, %(datos_investigacion)s,
+                %(guion_inmediato)s, %(prompt_inmediato)s,
+                %(guion_analisis)s, %(prompt_analisis)s,
+                %(modelo_ia_usado)s
             )
         """
-        cursor.execute(sql, datos_evento)
+        # Garantizar claves opcionales con valor por defecto para evitar KeyError
+        datos_completo = {
+            "fuente_alerta":            None,
+            "datos_fuente_primaria":    None,
+            "datos_fuente_secundaria":  None,
+            "guion_analisis":           None,
+            "prompt_analisis":          None,
+        }
+        datos_completo.update(datos_evento)
+        cursor.execute(sql, datos_completo)
         conexion.commit()
         nuevo_id = cursor.lastrowid
         print(f"[BD] - {estado.ts()} ✅ Evento '{datos_evento.get('tipo')}' registrado en BD (ID: {nuevo_id})")

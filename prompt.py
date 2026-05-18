@@ -1,13 +1,21 @@
-# rev 15.1.0
-# rev anterior: rev 15.0.0
+# rev 16.2.0
+# rev anterior: rev 16.1.0
 # Changelog:
-#   15.1.0 — Bloque OWM extendido: pressure_etiqueta, wind_speed_kmh, wind_gust_kmh,
-#            clouds_all. Bloque AQI extendido: aod_etiqueta. Nueva FUENTE 4:
-#            Open-Meteo Forecast horario (lluvia a corto plazo, viento, CAPE).
-#            Reglas 10-13 añadidas al final del bloque existente sin modificar
-#            las reglas 1-9 originales.
-#            Anotaciones de tipo migradas a Optional de typing para
-#            compatibilidad con Python 3.9 (Raspberry Pi OS).
+#   16.2.0 — _bloque_conagua(): línea de precipitación de HOY suprime prec cuando
+#            prob_lluvia=0 (prec sin probabilidad no tiene valor narrativo según
+#            documentación del endpoint method=1). Mismo criterio aplicado al bloque
+#            de mañana en modo_nocturno. Cabecera de FUENTE 1 aclara "datos del día
+#            completo". Regla 12 reescrita: elimina referencia a variable interna
+#            lluvia_relevante; añade aclaración de ventanas temporales distintas
+#            (CONAGUA=día completo, FUENTE 4=próximas 6h) y jerarquía de precedencia
+#            cuando ambas fuentes difieren.
+#   16.1.0 — Se retira cna_hora y rocio_relevante: el endpoint method=3 de
+#            CONAGUA es demasiado pesado para el hardware. Se elimina
+#            _bloque_conagua_horario() del prompt, se retira la regla 14
+#            (punto de rocío) y se ajusta la firma de construir_prompt().
+#            modo_nocturno se conserva (depende de OWM, no de method=3).
+#   16.0.0 — FUENTE 5 (CONAGUA method=3), weather_id alerts, modo_nocturno.
+#   15.1.0 — Bloque OWM extendido.
 
 import time
 from typing import Optional
@@ -20,10 +28,10 @@ import estado
 #   BLOQUES DE FUENTES
 # ==========================================
 
-def _bloque_conagua(cna):
+def _bloque_conagua(cna, modo_nocturno=False):
     """
     Genera el bloque de texto de CONAGUA para el prompt.
-    Si los datos no están disponibles, retorna la instrucción de omisión.
+    modo_nocturno=True: la perspectiva de mañana se expande a un bloque completo.
     """
     if not cna:
         return (
@@ -34,10 +42,49 @@ def _bloque_conagua(cna):
     hoy    = cna["hoy"]
     manana = cna.get("manana")
 
-    if manana:
+    # Línea de precipitación de HOY:
+    # probprec y prec son acumulados del día completo (no del momento de consulta).
+    # Si probprec=0, prec no tiene valor narrativo (es la cantidad condicional si
+    # lloviera, pero la probabilidad es nula). Se suprime para evitar confusión.
+    if (hoy.get("prob_lluvia") or 0) > 0:
+        linea_prec_hoy = (
+            "- Probabilidad de precipitación para el día: {0}% "
+            "— Acumulado proyectado: {1} mm".format(
+                hoy["prob_lluvia"], hoy["precipitacion"]
+            )
+        )
+    else:
+        linea_prec_hoy = "- Sin precipitación proyectada para el día (probabilidad: 0%)"
+
+    # Perspectiva de mañana en modo nocturno:
+    # Mismo criterio para prec — se suprime cuando prob_lluvia=0.
+    if manana and modo_nocturno:
+        man_prob   = manana.get("prob_lluvia", 0) or 0
+        if man_prob > 0:
+            linea_prec_man = (
+                "  Probabilidad de lluvia: {0}% — Precipitación proyectada: {1} mm\n".format(
+                    man_prob, manana.get("precipitacion", 0)
+                )
+            )
+        else:
+            linea_prec_man = "  Sin precipitación proyectada (probabilidad: 0%)\n"
+
         perspectiva = (
-            "Cielo {0} con una máxima de {1}°C "
-            "y mínima de {2}°C.".format(
+            "PRONÓSTICO COMPLETO PARA MAÑANA (MODO NOCTURNO — EXPANDE ESTE BLOQUE):\n"
+            "  Condición: {0} | Temp. Máx: {1}°C | Temp. Mín: {2}°C\n"
+            "  Viento: {3} a {4} km/h con ráfagas de {5} km/h\n"
+            "{6}"
+            "  Instrucción: Dedica un párrafo completo a la perspectiva de mañana, "
+            "comparable en detalle al reporte de hoy. "
+        ).format(
+            manana["condicion"], manana["temp_max"], manana["temp_min"],
+            manana.get("dir_viento", "variable"), manana.get("viento", "N/D"),
+            manana.get("rafagas", "N/D"),
+            linea_prec_man,
+        )
+    elif manana:
+        perspectiva = (
+            "Cielo {0} con una máxima de {1}°C y mínima de {2}°C.".format(
                 manana["condicion"], manana["temp_max"], manana["temp_min"]
             )
         )
@@ -45,15 +92,15 @@ def _bloque_conagua(cna):
         perspectiva = "Sin datos para mañana."
 
     return (
-        "FUENTE 1 (CONAGUA - Pronóstico Oficial PRIORITARIO):\n"
+        "FUENTE 1 (CONAGUA/Comisión Nacional del Agua - Pronóstico Oficial PRIORITARIO — datos del día completo):\n"
         "- Condición del día: {0} | Temp. Max: {1}°C | Temp. Min: {2}°C\n"
         "- Viento: Dirección {3} a {4} km/h con ráfagas de {5} km/h\n"
-        "- Precipitación acumulada del día: {6} mm (Probabilidad oficial de CONAGUA: {7}%)\n"
-        "- Breve perspectiva para mañana: {8}"
+        "{6}\n"
+        "- Perspectiva para mañana: {7}"
     ).format(
         hoy["condicion"], hoy["temp_max"], hoy["temp_min"],
         hoy["dir_viento"], hoy["viento"], hoy["rafagas"],
-        hoy["precipitacion"], hoy["prob_lluvia"],
+        linea_prec_hoy,
         perspectiva
     )
 
@@ -61,8 +108,7 @@ def _bloque_conagua(cna):
 def _bloque_owm(owm):
     """
     Genera el bloque de texto de OpenWeatherMap para el prompt.
-    Incluye presión (con etiqueta interpretativa), viento actual, ráfagas y nubosidad.
-    Si los datos no están disponibles, retorna la instrucción de omisión.
+    v16: incluye weather_id_etiqueta como línea de alerta al inicio cuando aplica.
     """
     if not owm:
         return (
@@ -70,7 +116,21 @@ def _bloque_owm(owm):
             "No menciones que OpenWeather falló ni que hay datos faltantes."
         )
 
-    # Ráfagas: solo se incluye si el dato existe
+    # Alerta de fenómeno severo: solo si weather_id_etiqueta no es None
+    _ALERTAS = {
+        "tormenta_electrica": "ALERTA: Se detecta tormenta eléctrica activa sobre la zona.",
+        "lluvia_helada":      "ALERTA: Lluvia helada detectada. Riesgo de hielo en carreteras.",
+        "nieve":              "ALERTA: Precipitación invernal (nieve/aguanieve) detectada.",
+        "niebla":             "AVISO: Neblina o niebla presente. Visibilidad reducida.",
+        "tornado":            "ALERTA MÁXIMA: Se detecta actividad de tornado en la región.",
+    }
+    etiqueta = owm.get("weather_id_etiqueta")
+    linea_alerta = (
+        "- {0}\n".format(_ALERTAS[etiqueta])
+        if etiqueta and etiqueta in _ALERTAS
+        else ""
+    )
+
     linea_rafagas = (
         " con ráfagas de {0} km/h".format(owm["wind_gust_kmh"])
         if owm.get("wind_gust_kmh") is not None
@@ -79,6 +139,7 @@ def _bloque_owm(owm):
 
     return (
         "FUENTE 2 (OpenWeather - Tiempo Real):\n"
+        "{alerta}"
         "- Temp. actual: {0}°C | Sensación térmica: {1}°C\n"
         "- Humedad: {2}% | Condición: {3}\n"
         "- Nubosidad actual: {4}%\n"
@@ -93,7 +154,8 @@ def _bloque_owm(owm):
         owm["visibilidad"], owm["lluvia_1h"],
         owm["wind_speed_kmh"], linea_rafagas,
         owm["pressure_etiqueta"],
-        owm["amanecer"], owm["atardecer"]
+        owm["amanecer"], owm["atardecer"],
+        alerta=linea_alerta,
     )
 
 
@@ -129,14 +191,11 @@ def _bloque_aqi(aqi):
 
 def _bloque_forecast(fc):
     """
-    Genera el bloque de pronóstico horario a corto plazo para el prompt.
-    Solo incluye información cuando los umbrales de relevancia se cumplen:
-      - Lluvia: prob_lluvia_max >= 20%
-      - Viento: diferencia >= 8 km/h respecto a la hora actual
-      - CAPE: >= 300 J/kg Y lluvia relevante simultáneamente
-    Si ningún dato supera sus umbrales, retorna la instrucción de omisión total.
+    Genera el bloque de pronóstico horario a corto plazo.
+    v16: añade líneas de helada y punto de rocío cuando son relevantes.
     """
-    if not fc or (not fc.get("lluvia_relevante") and not fc.get("viento_relevante")):
+    if not fc or (not fc.get("lluvia_relevante") and not fc.get("viento_relevante")
+                  and not fc.get("helada_etiqueta")):
         return (
             "FUENTE 4 (Open-Meteo Pronóstico a corto plazo): "
             "[SIN EVENTOS RELEVANTES EN LAS PRÓXIMAS HORAS] "
@@ -172,8 +231,18 @@ def _bloque_forecast(fc):
             )
         )
 
+    _HELADA_MSG = {
+        "helada_severa":   "ALERTA DE HELADA SEVERA: La isoterma de 0°C ha descendido por debajo de la altitud de la localidad. Riesgo crítico de hielo en superficies, cultivos y vías.",
+        "riesgo_helada":   "RIESGO DE HELADA: La isoterma de 0°C está muy próxima a la altitud de Huichapan. Posible formación de escarcha en zonas altas y cultivos.",
+        "isoterma_cercana": "WATCH DE HELADA: La temperatura de congelación se aproxima. Monitorear condiciones en zonas elevadas.",
+    }
+    helada = fc.get("helada_etiqueta")
+    if helada and helada in _HELADA_MSG:
+        lineas.append("- {0}".format(_HELADA_MSG[helada]))
+
     cuerpo = "\n".join(lineas)
     return "FUENTE 4 (Open-Meteo Pronóstico a corto plazo - próximas 6 horas):\n{0}".format(cuerpo)
+
 
 
 # ==========================================
@@ -256,24 +325,26 @@ def _bloque_sismo(contexto_sismo: Optional[dict]) -> str:
 #   PUNTO DE ENTRADA PÚBLICO
 # ==========================================
 
-def construir_prompt(cna, owm, aqi, forecast=None, contexto_sismo=None):
+def construir_prompt(cna, owm, aqi, forecast=None, contexto_sismo=None,
+                     modo_nocturno=False):
     """
-    Ensambla el prompt completo para el modelo de IA a partir de los datos
-    recolectados de las cuatro fuentes meteorológicas.
+    Ensambla el prompt completo para el modelo de IA.
+    v16.1: se retiran cna_hora y rocio_relevante (method=3 suspendido).
 
     Parámetros:
-        cna      — salida de conagua.obtener_pronostico() o None
-        owm      — dict extraído en meteorologo (incluye pressure_etiqueta, viento, etc.) o None
-        aqi      — dict extraído en meteorologo (incluye aod_etiqueta) o None
-        forecast — dict pre-procesado del forecast horario o None
-        contexto_sismo — dict con datos del sismo reciente si lo hay, o None
+        cna            — salida de conagua.obtener_pronostico() o None
+        owm            — dict de OWM (incluye pressure_etiqueta, weather_id_etiqueta) o None
+        aqi            — dict de AQI (incluye aod_etiqueta) o None
+        forecast       — dict pre-procesado del forecast horario o None
+        contexto_sismo — dict con datos del sismo reciente o None
+        modo_nocturno  — True si hora_actual >= sunset → perspectiva de mañana ampliada
 
     Retorna el texto del prompt listo para enviar a Gemini/Groq.
     """
     fecha_exacta = time.strftime("%Y-%m-%d")
     hora_exacta  = time.strftime("%H:%M")
 
-    bloque_cna   = _bloque_conagua(cna)
+    bloque_cna   = _bloque_conagua(cna, modo_nocturno=modo_nocturno)
     bloque_owm   = _bloque_owm(owm)
     bloque_aqi   = _bloque_aqi(aqi)
     bloque_fc    = _bloque_forecast(forecast)
@@ -327,10 +398,16 @@ def construir_prompt(cna, owm, aqi, forecast=None, contexto_sismo=None):
         "más de 8 km/h en las próximas horas, añade una oración de tendencia. "
         "Si no hay cambio significativo proyectado, no lo menciones.\n"
         "12. Pronóstico de lluvia a corto plazo (FUENTE 4): inclúyelo ÚNICAMENTE si "
-        "lluvia_relevante es True, es decir, si la probabilidad supera el 20% en alguna hora "
-        "de la ventana. Si lo incluyes, combínalo con el probprec de CONAGUA para dar una "
-        "perspectiva coherente que vaya de lo general (pronóstico del día) a lo específico "
-        "(hora a hora). Si la FUENTE 4 indica CAPE relevante junto a la lluvia, menciona que "
+        "la FUENTE 4 contiene datos de probabilidad de lluvia (probabilidad > 20% en la ventana). "
+        "Si la FUENTE 4 indica [SIN EVENTOS RELEVANTES], no menciones lluvia proyectada. "
+        "Cuando sí la incluyas, ten en cuenta que CONAGUA (FUENTE 1) reporta probabilidad "
+        "acumulada del DÍA COMPLETO, mientras que la FUENTE 4 reporta las PRÓXIMAS 6 HORAS. "
+        "Son ventanas temporales distintas. "
+        "Si CONAGUA indica 0% para el día pero la FUENTE 4 muestra alta probabilidad en la "
+        "ventana nocturna, la FUENTE 4 tiene precedencia narrativa por ser más granular y reciente: "
+        "explica que aunque el pronóstico general del día fue de baja probabilidad, las condiciones "
+        "de la tarde o noche han cambiado. "
+        "Si la FUENTE 4 indica energía convectiva disponible junto a la lluvia, menciona que "
         "la precipitación podría presentarse en forma de chubascos cortos e intensos con posible "
         "actividad eléctrica, usando la escala de referencia provista. Nunca menciones el valor "
         "numérico de CAPE ni el término técnico \"CAPE\" en el reporte; "
@@ -339,7 +416,17 @@ def construir_prompt(cna, owm, aqi, forecast=None, contexto_sismo=None):
         "Inclúyela ÚNICAMENTE si aod_etiqueta no es None (es decir, AOD > 0.2) Y la hora del "
         "reporte está entre las 06:00 y las 20:00. Descríbela en términos de claridad del cielo "
         "usando la etiqueta proporcionada, nunca como valor numérico ni término técnico. "
-        "Si es horario nocturno o el valor es bajo, omítela completamente sin mencionarla.\n\n"
+        "Si es horario nocturno o el valor es bajo, omítela completamente sin mencionarla.\n"
+        "14. Perspectiva de mañana — Modo Nocturno: si la FUENTE 1 indica MODO NOCTURNO, "
+        "dedica un párrafo completo y detallado al pronóstico de mañana. Describe la "
+        "evolución esperada de temperatura, condiciones y viento. No te limites a una sola "
+        "oración: el bloque de mañana debe ser comparable en extensión al de hoy.\n"
+        "15. Alertas de fenómenos severos (FUENTE 2 y FUENTE 4): si cualquiera de estas fuentes "
+        "contiene una línea de ALERTA o AVISO, menciónala con prioridad narrativa inmediatamente "
+        "después del saludo y antes de las condiciones generales. Usa lenguaje claro y directo "
+        "sin tecnicismos. La alerta de helada de la FUENTE 4 es especialmente crítica para "
+        "cultivos y carreteras.\n\n"
+
         "Al inicio de la redacción, antes del saludo, coloca exactamente la siguiente "
         "cortinilla institucional:\n"
         "\"Sistema automatizado de monitoreo climatológico preliminar con motivos de estudio; "
