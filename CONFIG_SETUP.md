@@ -85,10 +85,10 @@ ICECAST_PASSWORD   = "TU_CONTRASEÑA_ICECAST"
 ICECAST_USER       = "source"
 ICECAST_BITRATE_K  = 16
 
-# --- Bluetooth (salida de audio local) ---
-BT_HABILITADO         = False                        # Ver sección 7
-BT_DISPOSITIVO        = "bluealsa:DEV=XX:XX:XX:XX:XX:XX,PROFILE=a2dp"
-BT_SAMPLE_RATE_SALIDA = 22050
+# --- Auxiliar (salida de audio local por tarjeta USB) ---
+AUX_HABILITADO         = False                        # Ver sección 7
+AUX_DISPOSITIVO        = "plughw:1,0"
+AUX_SAMPLE_RATE_SALIDA = 22050
 
 # ==========================================
 #   SCHEDULER DE ACTUALIZACIONES
@@ -264,16 +264,16 @@ edge-tts --list-voices | grep "^es-"
 
 ---
 
-## Sección 7 — Salida Bluetooth (para transmisor FM)
+## Sección 7 — Salida auxiliar por USB (para transmisor FM)
 
 | Parámetro | Descripción |
 |---|---|
-| `BT_HABILITADO` | `True` para activar la salida de audio a un dispositivo Bluetooth vía ALSA/BlueALSA; `False` para desactivarla. |
-| `BT_DISPOSITIVO` | Nombre del sink ALSA del transmisor FM BT ya emparejado. Formato BlueALSA típico: `"bluealsa:DEV=XX:XX:XX:XX:XX:XX,PROFILE=a2dp"`. |
-| `BT_SAMPLE_RATE_SALIDA` | Frecuencia de muestreo para la rama BT. Se recomienda usar `22050` (mismo que el pipeline) para evitar resampleo. |
+| `AUX_HABILITADO` | `True` para activar la salida de audio a una tarjeta de sonido USB externa vía ALSA; `False` para desactivarla. |
+| `AUX_DISPOSITIVO` | Nombre del dispositivo ALSA de la tarjeta de sonido USB. Formato típico: `"plughw:1,0"`. Verificar con `aplay -l`. |
+| `AUX_SAMPLE_RATE_SALIDA` | Frecuencia de muestreo para la rama auxiliar. Se recomienda usar `22050` (mismo que el pipeline) para evitar resampleo. |
 
 > [!NOTE]
-> El emparejamiento del dispositivo Bluetooth se realiza una sola vez con `bluetoothctl` a nivel del sistema operativo.
+> El prefijo `plughw:` permite que ALSA realice conversión automática de formato si la tarjeta no soporta 22050 Hz directamente. Para identificar el dispositivo correcto, ejecutar `aplay -l` y buscar la tarjeta USB.
 
 ---
 

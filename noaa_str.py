@@ -319,7 +319,7 @@ def preguntar_arranque_inicial() -> bool:
 # ==========================================
 
 def iniciar_estacion():
-    salidas = f"Icecast + BT → {config.FRECUENCIA_FM} MHz" if config.BT_HABILITADO else "Icecast"
+    salidas = f"Icecast + AUX → {config.FRECUENCIA_FM} MHz" if config.AUX_HABILITADO else "Icecast"
     print("=====================================================")
     print(f" INICIANDO RADIO NOAA STREAM — {config.CIUDAD}    ")
     print(f" Salidas: {salidas}                               ")

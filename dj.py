@@ -1,6 +1,11 @@
-# rev 15.2.0
-# rev anterior: rev 15.1.4
+# rev 15.3.0
+# rev anterior: rev 15.2.0
 # Changelog:
+#   15.3.0 — Salida de audio local migrada de Bluetooth (BlueALSA) a tarjeta de
+#            sonido USB externa (cable auxiliar). config.BT_* → config.AUX_*.
+#            Pipeline tee bifurcado conserva la misma estructura; aplay ahora
+#            apunta al dispositivo ALSA de la tarjeta USB (plughw). Bucle de
+#            resiliencia while/aplay mantenido para recuperación automática.
 #   15.2.0 — Reemplazo de pi_fm_rds por salida de audio local vía Bluetooth.
 #            _construir_comando_stream() ahora soporta dos modos:
 #              BT_HABILITADO = True : tee bifurca el PCM crudo antes de sox.
@@ -53,23 +58,23 @@ def _construir_comando_stream():
     """
     Construye el comando de pipeline de audio según la configuración.
 
-    Cuando BT_HABILITADO = True:
+    Cuando AUX_HABILITADO = True:
         El PCM crudo se bifurca con tee antes de cualquier conversión de formato,
         lo que permite que cada rama tenga su propio sox independiente:
 
-        Rama BT (best-effort):
-            sox (PCM→PCM, resamplea si BT_SAMPLE_RATE_SALIDA != SAMPLE_RATE)
+        Rama AUX (best-effort):
+            sox (PCM→PCM, resamplea si AUX_SAMPLE_RATE_SALIDA != SAMPLE_RATE)
             | while true; do aplay -t raw ...; sleep 2; done
-            El bucle while permite que aplay se reinicie automáticamente si el
-            transmisor FM BT se desconecta temporalmente. El formato explícito
+            El bucle while permite que aplay se reinicie automáticamente si la
+            tarjeta USB se desconecta temporalmente. El formato explícito
             (-t raw) elimina la dependencia del header WAV, por lo que cada
             reinicio de aplay retoma el stream sin artefactos.
 
         Rama Icecast:
             sox (PCM→WAV) | ffmpeg → Icecast
-            Idéntica al modo sin BT; no se ve afectada por el estado del BT.
+            Idéntica al modo sin AUX; no se ve afectada por el estado de la tarjeta USB.
 
-    Cuando BT_HABILITADO = False:
+    Cuando AUX_HABILITADO = False:
         sox raw → WAV → ffmpeg → Icecast   (sin bifurcación; idéntico al modo anterior)
 
     El pipeline siempre recibe PCM raw signed-16bit mono a SAMPLE_RATE Hz por stdin.
@@ -99,49 +104,49 @@ def _construir_comando_stream():
         "{url}".format(bitrate=config.ICECAST_BITRATE_K, url=icecast_url)
     )
 
-    if config.BT_HABILITADO:
+    if config.AUX_HABILITADO:
         # -------------------------------------------------------
-        # Modo BT + Icecast:
+        # Modo AUX + Icecast:
         #   tee bifurca el PCM crudo (antes de sox) en dos ramas independientes.
         #   La bifurcación en crudo evita que un reinicio de aplay necesite
-        #   el header WAV; sox de la rama BT entrega PCM con formato explícito.
+        #   el header WAV; sox de la rama AUX entrega PCM con formato explícito.
         # -------------------------------------------------------
 
-        # sox de la rama BT: PCM→PCM (resamplea solo si el rate difiere)
-        sox_a_pcm_bt = (
+        # sox de la rama AUX: PCM→PCM (resamplea solo si el rate difiere)
+        sox_a_pcm_aux = (
             "sox -t raw -r {sr_in} -e signed -b 16 -c 1 - "
             "-t raw -r {sr_out} -e signed -b 16 -c 1 -".format(
                 sr_in=config.SAMPLE_RATE,
-                sr_out=config.BT_SAMPLE_RATE_SALIDA,
+                sr_out=config.AUX_SAMPLE_RATE_SALIDA,
             )
         )
         # aplay con formato explícito: no depende del header WAV para iniciar
-        aplay_bt = (
+        aplay_aux = (
             "aplay -D {dispositivo} -t raw -f S16_LE -r {rate} -c 1".format(
-                dispositivo=config.BT_DISPOSITIVO,
-                rate=config.BT_SAMPLE_RATE_SALIDA,
+                dispositivo=config.AUX_DISPOSITIVO,
+                rate=config.AUX_SAMPLE_RATE_SALIDA,
             )
         )
-        # Bucle de resiliencia: si el transmisor BT se desconecta, aplay
+        # Bucle de resiliencia: si la tarjeta USB se desconecta, aplay
         # se reinicia automáticamente cada 2 s sin afectar la rama Icecast
-        rama_bt = (
-            "{sox_bt} | while true; do {aplay}; sleep 2; done".format(
-                sox_bt=sox_a_pcm_bt,
-                aplay=aplay_bt,
+        rama_aux = (
+            "{sox_aux} | while true; do {aplay}; sleep 2; done".format(
+                sox_aux=sox_a_pcm_aux,
+                aplay=aplay_aux,
             )
         )
         return (
-            "tee >({rama_bt}) | "
+            "tee >({rama_aux}) | "
             "{sox_wav} | "
             "{ffmpeg}".format(
-                rama_bt=rama_bt,
+                rama_aux=rama_aux,
                 sox_wav=sox_a_wav,
                 ffmpeg=ffmpeg_a_icecast,
             )
         )
     else:
         # -------------------------------------------------------
-        # Modo solo Icecast (sin BT):
+        # Modo solo Icecast (sin AUX):
         #   sox actúa como buffer de entrada (PCM raw → WAV stdout).
         #   ffmpeg toma el WAV y publica en Icecast.
         #   El buffer interno de sox (~32KB por defecto) suaviza
@@ -174,7 +179,7 @@ def iniciar_o_reiniciar_stream():
     # Se usa sudo en ambos pkill porque el script se ejecuta como root
     # (sudo python3) y los procesos hijo heredan ese UID. Sin sudo,
     # pkill no puede señalar procesos root desde un contexto no root.
-    if config.BT_HABILITADO:
+    if config.AUX_HABILITADO:
         subprocess.run("sudo pkill -f aplay", shell=True, stderr=subprocess.DEVNULL)
     subprocess.run("sudo pkill -f ffmpeg", shell=True, stderr=subprocess.DEVNULL)
 

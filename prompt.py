@@ -1,6 +1,23 @@
-# rev 16.2.0
-# rev anterior: rev 16.1.0
+# rev 16.5.0
+# rev anterior: rev 16.4.0
 # Changelog:
+#   16.5.0 — _bloque_owm(): presión fusionada en una sola línea con formato
+#            "X hPa | etiqueta" (antes eran dos líneas separadas). 
+#            _bloque_aqi(): AOD fusionado en una sola línea con formato
+#            "X.XXX | etiqueta" cuando ambos valores están disponibles.
+#            Reglas 10 y 13 ajustadas para reflejar el nuevo formato.
+#   16.4.0 — _bloque_owm(): expone pressure en hPa como 'Presión (valor de referencia
+#            técnica)'. _bloque_forecast(): expone cape_max en J/kg e isoterma 0°C
+#            en m s.n.m. como campos de referencia técnica, incluidos en ambas ramas
+#            (eventos relevantes y sin eventos). Reglas 10, 12 y 15 actualizadas:
+#            el modelo puede usar esos valores para calibrar la narrativa pero nunca
+#            los menciona literalmente; los traduce a lenguaje accesible.
+#   16.3.0 — _bloque_aqi(): se expone el valor numérico de AOD como campo de
+#            referencia técnica ("AOD (valor de referencia técnica)") adyacente a
+#            la etiqueta interpretativa. Regla 13 actualizada: el modelo puede usar
+#            ese valor para enriquecer su explicación (p. ej. distinguir AOD cercano
+#            al umbral de uno marcadamente elevado), pero sigue sin mencionarlo
+#            literalmente; debe traducirlo siempre a lenguaje accesible.
 #   16.2.0 — _bloque_conagua(): línea de precipitación de HOY suprime prec cuando
 #            prob_lluvia=0 (prec sin probabilidad no tiene valor narrativo según
 #            documentación del endpoint method=1). Mismo criterio aplicado al bloque
@@ -137,6 +154,14 @@ def _bloque_owm(owm):
         else ""
     )
 
+    # Línea de presión: "1012 hPa | etiqueta" si hay valor numérico, solo etiqueta si no.
+    if owm.get("pressure") is not None:
+        linea_presion = "- Presión atmosférica: {0} hPa | {1}".format(
+            owm["pressure"], owm["pressure_etiqueta"]
+        )
+    else:
+        linea_presion = "- Presión atmosférica: {0}".format(owm["pressure_etiqueta"])
+
     return (
         "FUENTE 2 (OpenWeather - Tiempo Real):\n"
         "{alerta}"
@@ -145,17 +170,17 @@ def _bloque_owm(owm):
         "- Nubosidad actual: {4}%\n"
         "- Visibilidad: {5} km | Lluvia registrada en la última hora: {6} mm\n"
         "- Viento actual: {7} km/h{8}\n"
-        "- Presión atmosférica: {9}\n"
-        "- Hora de amanecer: {10} | Hora de atardecer: {11}"
+        "{presion}\n"
+        "- Hora de amanecer: {9} | Hora de atardecer: {10}"
     ).format(
         owm["temp"], owm["feels"],
         owm["humedad"], owm["desc"],
         owm["clouds_all"],
         owm["visibilidad"], owm["lluvia_1h"],
         owm["wind_speed_kmh"], linea_rafagas,
-        owm["pressure_etiqueta"],
         owm["amanecer"], owm["atardecer"],
         alerta=linea_alerta,
+        presion=linea_presion,
     )
 
 
@@ -168,13 +193,19 @@ def _bloque_aqi(aqi):
     if not aqi:
         return "Datos de calidad del aire y radiación no disponibles."
 
-    # AOD: solo se incluye si la etiqueta no es None
-    # (etiqueta es None cuando AOD <= 0.2, no es narrativamente relevante)
-    linea_aod = (
-        "\n- Opacidad atmosférica: {0}".format(aqi["aod_etiqueta"])
-        if aqi.get("aod_etiqueta") is not None
-        else ""
-    )
+    # AOD: línea combinada "valor | etiqueta" cuando hay etiqueta (AOD > 0.2).
+    # Si hay valor pero no etiqueta, se expone solo el valor técnico.
+    # Si no hay dato, línea vacía.
+    aod_valor = aqi.get("aerosol_optical_depth")
+    aod_etiqueta = aqi.get("aod_etiqueta")
+    if aod_etiqueta is not None and aod_valor is not None:
+        linea_aod = "\n- Opacidad atmosférica: {0:.3f} | {1}".format(aod_valor, aod_etiqueta)
+    elif aod_etiqueta is not None:
+        linea_aod = "\n- Opacidad atmosférica: {0}".format(aod_etiqueta)
+    elif aod_valor is not None:
+        linea_aod = "\n- AOD (valor técnico): {0:.3f}".format(aod_valor)
+    else:
+        linea_aod = ""
 
     return (
         "- AQI: {0} | PM10: {1} μg/m³ | PM2.5: {2} μg/m³\n"
@@ -194,12 +225,28 @@ def _bloque_forecast(fc):
     Genera el bloque de pronóstico horario a corto plazo.
     v16: añade líneas de helada y punto de rocío cuando son relevantes.
     """
+    # Valores de referencia técnica (siempre incluidos cuando hay datos)
+    refs = []
+    if fc:
+        if fc.get("cape_max"):
+            refs.append(
+                "- CAPE (valor técnico): {0} J/kg".format(fc["cape_max"])
+            )
+        if fc.get("freezing_level_m") is not None:
+            refs.append(
+                "- Isoterma (valor técnico): {0:.0f} m s.n.m.".format(
+                    fc["freezing_level_m"]
+                )
+            )
+    refs_str = ("\n" + "\n".join(refs)) if refs else ""
+
     if not fc or (not fc.get("lluvia_relevante") and not fc.get("viento_relevante")
                   and not fc.get("helada_etiqueta")):
         return (
             "FUENTE 4 (Open-Meteo Pronóstico a corto plazo): "
             "[SIN EVENTOS RELEVANTES EN LAS PRÓXIMAS HORAS] "
             "No menciones esta fuente ni su ausencia de datos en el reporte."
+            + refs_str
         )
 
     lineas = []
@@ -241,7 +288,7 @@ def _bloque_forecast(fc):
         lineas.append("- {0}".format(_HELADA_MSG[helada]))
 
     cuerpo = "\n".join(lineas)
-    return "FUENTE 4 (Open-Meteo Pronóstico a corto plazo - próximas 6 horas):\n{0}".format(cuerpo)
+    return "FUENTE 4 (Open-Meteo Pronóstico a corto plazo - próximas 6 horas):\n{0}{1}".format(cuerpo, refs_str)
 
 
 
@@ -353,7 +400,7 @@ def construir_prompt(cna, owm, aqi, forecast=None, contexto_sismo=None,
 
     prompt = (
         "Eres el sistema automatizado de alerta meteorológica regional. "
-        "Escribe un reporte de radio muy detallado para {ciudad} y alrededores. Evita ser redundante en la redacción y personaliza según la hora actual.\n\n"
+        "Escribe un reporte de radio (NO mencionar palabras como 'radioescuchas' o similares) muy detallado para {ciudad} y alrededores. Evita ser redundante en la redacción y personaliza según la hora actual.\n\n"
         "{bloque_sis}"
         "{cna}\n\n"
         "{owm}\n\n"
@@ -365,7 +412,7 @@ def construir_prompt(cna, owm, aqi, forecast=None, contexto_sismo=None,
         "{regla_lluvia}\n"
         "3. Menciona la sensación térmica junto a la temperatura actual para darle más valor al reporte. Además Da interpretación del clima actual. \n"
         "4. Menciona la visibilidad solo si crees que es un dato relevante en este momento "
-        "(niebla, lluvia, o si es menor a 10km).\n"
+        "(niebla, lluvia, o si es menor a 10km. NO mencionar si es de 10km ya que es el rango máximo).\n"
         "5. Menciona la hora del amanecer o atardecer si la hora actual de este reporte ({hora}) "
         "está en un rango muy cercano (una hora y media antes o después) al evento. "
         "Si no es relevante en este momento, omítelo por completo para no ser repetitivo. "
@@ -388,9 +435,11 @@ def construir_prompt(cna, owm, aqi, forecast=None, contexto_sismo=None,
         "Las horas menciónalas como texto para locución "
         "(Ej. \"Veintitrés Horas con Treinta Minutos\"). "
         "Además hay que evitar ser redundantes en toda la redacción.\n"
-        "10. Presión atmosférica: NO menciones el valor numérico en hPa. Úsala exclusivamente "
-        "como contexto explicativo en una sola oración integrada al párrafo de viento o condiciones "
-        "generales. Si la etiqueta de presión de la FUENTE 2 contrasta con la condición actual "
+        "10. Presión atmosférica: la FUENTE 2 la presenta como 'valor hPa | etiqueta'. "
+        "Usa el valor numérico como contexto interno para calibrar la narrativa; "
+        "menciónalo solo si es relevante para el contexto. Describe la presión en una sola "
+        "oración integrada al párrafo de viento o condiciones generales usando la etiqueta. "
+        "Si la etiqueta contrasta con la condición actual "
         "(por ejemplo, presión alta pero lluvia activa), señálalo de forma breve e informativa. "
         "Si no hay contraste interesante o la presión es normal sin anomalías, omítela por completo.\n"
         "11. Viento: menciona el viento actual de la FUENTE 2 como el estado en este momento, "
@@ -409,13 +458,17 @@ def construir_prompt(cna, owm, aqi, forecast=None, contexto_sismo=None,
         "de la tarde o noche han cambiado. "
         "Si la FUENTE 4 indica energía convectiva disponible junto a la lluvia, menciona que "
         "la precipitación podría presentarse en forma de chubascos cortos e intensos con posible "
-        "actividad eléctrica, usando la escala de referencia provista. Nunca menciones el valor "
-        "numérico de CAPE ni el término técnico \"CAPE\" en el reporte; "
+        "actividad eléctrica, usando la escala de referencia provista. El campo 'CAPE (valor técnico)' "
+        "de la FUENTE 4 contiene el valor real en J/kg; úsalo como contexto interno para precisar la intensidad de la "
+        "convección en tu narrativa, no lo menciones literalmente ni uses el término técnico 'CAPE' salvo que sea relevante para el contexto; "
         "tradúcelo siempre a lenguaje accesible.\n"
         "13. Opacidad atmosférica (FUENTE 3): agrúpala dentro del párrafo de calidad del aire. "
-        "Inclúyela ÚNICAMENTE si aod_etiqueta no es None (es decir, AOD > 0.2) Y la hora del "
+        "La FUENTE 3 la presenta como 'valor | etiqueta'. "
+        "Inclúyela ÚNICAMENTE si la etiqueta está presente (AOD > 0.2) Y la hora del "
         "reporte está entre las 06:00 y las 20:00. Descríbela en términos de claridad del cielo "
-        "usando la etiqueta proporcionada, nunca como valor numérico ni término técnico. "
+        "usando la etiqueta. Usa el valor numérico como contexto adicional para enriquecer la "
+        "explicación (por ejemplo, precisar si está cerca del umbral o es marcadamente elevado), "
+        "traduciéndolo siempre a lenguaje accesible. "
         "Si es horario nocturno o el valor es bajo, omítela completamente sin mencionarla.\n"
         "14. Perspectiva de mañana — Modo Nocturno: si la FUENTE 1 indica MODO NOCTURNO, "
         "dedica un párrafo completo y detallado al pronóstico de mañana. Describe la "
@@ -425,7 +478,10 @@ def construir_prompt(cna, owm, aqi, forecast=None, contexto_sismo=None,
         "contiene una línea de ALERTA o AVISO, menciónala con prioridad narrativa inmediatamente "
         "después del saludo y antes de las condiciones generales. Usa lenguaje claro y directo "
         "sin tecnicismos. La alerta de helada de la FUENTE 4 es especialmente crítica para "
-        "cultivos y carreteras.\n\n"
+        "cultivos y carreteras. El campo 'Isoterma (valor técnico)' de la "
+        "FUENTE 4 contiene la altitud real de la isoterma de congelación en metros s.n.m.; "
+        "úsalo para enriquecer la narrativa de helada (p. ej. señalar qué tan próxima está la "
+        "isoterma a la altitud de la localidad ~2100m). Mencionalo siempre en lenguaje accesible.\n\n"
 
         "Al inicio de la redacción, antes del saludo, coloca exactamente la siguiente "
         "cortinilla institucional:\n"
