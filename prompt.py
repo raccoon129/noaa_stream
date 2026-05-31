@@ -272,9 +272,10 @@ def _bloque_forecast(fc):
         lineas.append(
             "- Energía convectiva disponible (CAPE): {0}. "
             "Pico proyectado alrededor de las {1:02d}:00 horas. "
-            "Escala de referencia estándar: Bajo (<300 J/kg), Moderado (300-1000 J/kg), "
-            "Alto (1000-2500 J/kg), Muy alto (>2500 J/kg).".format(
-                fc["cape_etiqueta"], fc["hora_cape_max"]
+            "Escala para la altitud (~{2} m s.n.m.): "
+            "Bajo (<500 J/kg), Moderado (500-1499 J/kg), "
+            "Fuerte (1500-2499 J/kg), Severo (\u22652500 J/kg).".format(
+                fc["cape_etiqueta"], fc["hora_cape_max"], config.ALTITUD_M
             )
         )
 
@@ -481,7 +482,7 @@ def construir_prompt(cna, owm, aqi, forecast=None, contexto_sismo=None,
         "cultivos y carreteras. El campo 'Isoterma (valor técnico)' de la "
         "FUENTE 4 contiene la altitud real de la isoterma de congelación en metros s.n.m.; "
         "úsalo para enriquecer la narrativa de helada (p. ej. señalar qué tan próxima está la "
-        "isoterma a la altitud de la localidad ~2100m). Mencionalo siempre en lenguaje accesible.\n\n"
+        "isoterma a la altitud de la localidad ~{altitud_m} m s.n.m.). Mencionalo siempre en lenguaje accesible.\n\n"
 
         "Al inicio de la redacción, antes del saludo, coloca exactamente la siguiente "
         "cortinilla institucional:\n"
@@ -504,6 +505,7 @@ def construir_prompt(cna, owm, aqi, forecast=None, contexto_sismo=None,
         fm=config.FRECUENCIA_FM,
         mw=config.POTENCIA_MW,
         fecha=fecha_exacta,
+        altitud_m=config.ALTITUD_M,
     )
 
     return prompt

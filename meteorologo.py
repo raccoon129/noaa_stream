@@ -1,6 +1,27 @@
-# rev 16.1.0
-# rev anterior: rev 16.0.0
+# rev 16.3.0
+# rev anterior: rev 16.2.0
 # Changelog:
+#   16.3.0 — Umbrales de cape_etiqueta calibrados para el Altiplano (~2108 m).
+#            La escala NWS/NOAA estándar (<1000 débil / 1000-2499 moderado /
+#            2500-3999 fuerte / ≥4000 extremo) está pensada para nivel del mar.
+#            A 2100 m la columna de flotabilidad disponible es más corta, por
+#            lo que valores que parecen «bajos» en la escala estándar son ya
+#            operativamente significativos (fuente: NWS/NOAA, investigación
+#            SciELO Altiplano mexicano, Ventusky). Nueva escala aplicada:
+#              500–1499 J/kg  → convección moderada
+#              1500–2499 J/kg → convección fuerte
+#              ≥2500 J/kg     → convección severa (raro a esta altitud)
+#            Umbral de activación sube de 300 → 500 J/kg para eliminar
+#            ruido de inestabilidad débil sin señal real de tormenta.
+#            Escala de referencia del prompt.py (regla 12) actualizada en
+#            consonancia (Bajo <500, Moderado 500-1499, Fuerte 1500-2499,
+#            Severo ≥2500).
+#   16.2.0 — cape_etiqueta: se retiran los rangos numéricos del texto de la
+#            etiqueta (ya aparecen en refs_str y en la regla 12 del prompt,
+#            causando triple redundancia). Se mejora la precisión interpretativa:
+#            300-1000 J/kg = convección moderada (no «tormentas débiles»);
+#            >2500 J/kg añade granizo y actividad tornádica como información
+#            civil relevante para la radio.
 #   16.1.0 — cape_etiqueta ahora requiere DOBLE condición: cape_max >= 300
 #            Y lluvia_relevante = True. Sin señal de lluvia el CAPE no tiene
 #            valor narrativo para Huichapan (~2108 m). cape_relevante derivado
@@ -284,12 +305,15 @@ def _etiqueta_aod(aod):
 #   EXTRACCIÓN Y PRE-PROCESAMIENTO DEL FORECAST
 # ==========================================
 
-def _etiqueta_helada(freezing_level_m, altitud_estacion_m=2108):
+def _etiqueta_helada(freezing_level_m, altitud_estacion_m=None):
     """
     Evalúa si la isoterma de 0°C se aproxima a la altitud de la estación.
     Retorna una etiqueta de alerta o None si no hay riesgo.
-    La estación está a ~2,108 m (Huichapan); configurable si se mueve.
+    Usa config.ALTITUD_M como referencia; configurable vía el parámetro
+    altitud_estacion_m para pruebas o despliegues en otro lugar.
     """
+    if altitud_estacion_m is None:
+        altitud_estacion_m = config.ALTITUD_M
     if freezing_level_m is None:
         return None
     margen = freezing_level_m - altitud_estacion_m
@@ -319,11 +343,16 @@ def _extraer_forecast(datos_fc, hora_actual):
         hora_viento_max   — hora (int, 0-23) del viento máximo
         cape_max          — CAPE máximo en la ventana (J/kg)
         hora_cape_max     — hora (int, 0-23) del CAPE máximo
-        cape_etiqueta     — etiqueta interpretativa del CAPE, o None si cape_max < 300
-                            O si lluvia_relevante es False (sin lluvia, el CAPE no es narrativo)
+        cape_etiqueta     — etiqueta interpretativa del CAPE calibrada para el Valle del Mezquital
+                            None si cape_max < 500 o si
+                            lluvia_relevante es False.
+                            Escala usada (ajustada por altitud, fuente NWS/NOAA + SciELO MX):
+                              500–1499 J/kg  → convección moderada
+                              1500–2499 J/kg → convección fuerte
+                              ≥2500 J/kg     → convección severa
         lluvia_relevante  — True si prob_lluvia_max >= 20
         viento_relevante  — True si (viento_max - viento_actual) >= 8 km/h
-        cape_relevante    — True si cape_etiqueta no es None (cape_max >= 300 Y lluvia_relevante)
+        cape_relevante    — True si cape_etiqueta no es None (cape_max >= 500 Y lluvia_relevante)
         dew_point         — punto de rocío promedio en la ventana (°C), o None
         freezing_level_m  — isoterma 0°C mínima en la ventana (m), o None
         helada_etiqueta   — etiqueta de alerta de helada, o None
@@ -389,21 +418,36 @@ def _extraer_forecast(datos_fc, hora_actual):
     lluvia_relevante = prob_max >= 20
     viento_relevante = (viento_max - viento_actual) >= 8
 
-    # Etiqueta CAPE: solo se asigna si hay lluvia proyectada significativa.
-    # Sin señal de lluvia, el CAPE no tiene valor narrativo sin importar su magnitud.
-    # Un CAPE de 500-800 J/kg sin lluvia proyectada es normal en zonas de altitud
-    # elevada (Huichapan, ~2108 m) y no indica riesgo real de tormenta.
+    # ---- Etiqueta CAPE calibrada por altitud (config.ALTITUD_M) ----
+    # La escala NWS/NOAA estándar está diseñada para nivel del mar. A la
+    # altitud de la estación (config.ALTITUD_M m s.n.m.) la columna de
+    # flotabilidad disponible es más corta, por lo que valores que parecen
+    # «bajos» en la escala estándar son ya operativamente significativos.
+    # Fuentes: NWS/NOAA (weather.gov/lmk/indices), investigación convección
+    # Altiplano mexicano (SciELO / Ventusky 300-1000=débil, 1000-2000=moderado).
+    # Escala ajustada para config.ALTITUD_M >= ~2000 m:
+    #   < 500 J/kg     → inestabilidad débil, no narrativo
+    #   500-1499 J/kg  → convección moderada (tormenta posible)
+    #   1500-2499 J/kg → convección fuerte (tormenta probable con granizo)
+    #   ≥ 2500 J/kg    → convección severa (raro a esta altitud)
+    # Sin señal de lluvia, el CAPE no tiene valor narrativo (rev 16.1.0).
     cape_etiqueta = None
-    if cape_max >= 300 and lluvia_relevante:
-        # cape_etiqueta = None  # rev 16.1.0: condición anterior (solo cape_max >= 300)
-        if cape_max < 1000:
-            cape_etiqueta = "rango moderado (300-1000 J/kg): tormentas débiles posibles"
+    if cape_max >= 500 and lluvia_relevante:
+        if cape_max < 1500:
+            # Convección moderada: inestabilidad suficiente para chubascos con
+            # actividad eléctrica aislada. A 2100 m, 500-1499 J/kg equivale
+            # operativamente al rango «débil-moderado» de nivel del mar.
+            cape_etiqueta = "convección moderada — posibles chubascos con actividad eléctrica aislada"
         elif cape_max < 2500:
-            cape_etiqueta = "rango alto (1000-2500 J/kg): tormentas fuertes probables"
+            # Convección fuerte: updrafts capaces de producir granizo y vientos
+            # racheados. Equivale a «moderado-fuerte» en escala estándar.
+            cape_etiqueta = "convección fuerte — tormentas probables con granizo y vientos racheados"
         else:
-            cape_etiqueta = "rango muy alto (>2500 J/kg): tormentas severas"
+            # Convección severa: raro a 2100 m, pero posible con irrupción de
+            # humedad tropical. Riesgo de granizo grande o actividad tornádica.
+            cape_etiqueta = "convección severa — riesgo de tormentas violentas, granizo intenso o actividad tornádica"
 
-    # CAPE narrativamente relevante: magnitud Y lluvia presentes simultáneamente
+    # CAPE narrativamente relevante: magnitud >= 500 J/kg Y lluvia presentes
     cape_relevante = cape_etiqueta is not None
 
     # --- Punto de rocío (promedio de la ventana) ---
