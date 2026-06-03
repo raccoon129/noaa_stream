@@ -1,6 +1,9 @@
-# rev 16.3.0
-# rev anterior: rev 16.2.0
+# rev 16.4.0
+# rev anterior: rev 16.3.0
 # Changelog:
+#   16.4.0 — Se agrega inserción de datos de fase lunar en la tabla datos_lunar en
+#            guardar_reporte_en_bd(). Se define el helper _limpiar_hora_bd() para
+#            limpiar valores TIME de MySQL. Requiere la migración v18 en BD.
 #   16.3.0 — guardar_condicion_especial() generalizado: datos_sassla → datos_fuente_primaria,
 #            datos_ssn → datos_fuente_secundaria. Se agrega fuente_alerta (sistema que emitió
 #            la alerta: SASSLA, CONAGUA, CENAPRED, etc.) y guion_analisis/prompt_analisis
@@ -38,6 +41,13 @@ def _sanitizar_error(mensaje: str) -> str:
         if clave and clave in resultado:
             resultado = resultado.replace(clave, "(XXXXX)")
     return resultado
+
+
+def _limpiar_hora_bd(hora_str: Optional[str]) -> Optional[str]:
+    """Convierte 'N/D' o valores vacíos a None para columnas TIME en MySQL."""
+    if not hora_str or hora_str == "N/D":
+        return None
+    return hora_str
 
 
 # ==========================================
@@ -280,6 +290,38 @@ def guardar_reporte_en_bd(datos_reporte: dict) -> Optional[int]:
             print(f"[BD] - {estado.ts()} ✅ Datos Forecast guardados (openmeteo_id: {openmeteo_id})")
         elif fc is not None and openmeteo_id is None:
             print(f"[BD] - {estado.ts()} ⚠️  Forecast omitido: datos_openmeteo no disponible en este ciclo.")
+
+        # ------------------------------------------------------------------
+        # 6. datos_fase_lunar (solo si los datos de USNO están disponibles)
+        # ------------------------------------------------------------------
+        lunar = datos_reporte.get("lunar")
+        if lunar is not None:
+            cursor.execute(
+                """INSERT INTO datos_fase_lunar (
+                       reporte_id,
+                       fase_nombre, fase_ingles, iluminacion_porcentaje,
+                       salida_luna, ocaso_luna, transito_luna,
+                       visible_de_dia, fase_etiqueta
+                   ) VALUES (
+                       %s,
+                       %s, %s, %s,
+                       %s, %s, %s,
+                       %s, %s
+                   )""",
+                (
+                    nuevo_id,
+                    lunar.get("fase_nombre"),
+                    lunar.get("moon_phase"),
+                    int(lunar.get("moon_illumination")) if lunar.get("moon_illumination") and lunar.get("moon_illumination") != "N/D" else None,
+                    _limpiar_hora_bd(lunar.get("moonrise")),
+                    _limpiar_hora_bd(lunar.get("moonset")),
+                    _limpiar_hora_bd(lunar.get("transit_time")),
+                    1 if lunar.get("visible_de_dia") else 0,
+                    lunar.get("fase_etiqueta"),
+                ),
+            )
+            conexion.commit()
+            print(f"[BD] - {estado.ts()} ✅ Datos Fase Lunar guardados (reporte_id: {nuevo_id})")
 
         cursor.close()
         return nuevo_id

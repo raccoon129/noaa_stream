@@ -1,6 +1,19 @@
-# rev 16.3.0
-# rev anterior: rev 16.2.0
+# rev 16.7.0
+# rev anterior: rev 16.6.0
 # Changelog:
+#   16.7.0 — Se fuerza a obtener_fase_lunar() a usar la fecha local de México (UTC-6)
+#            para la consulta a la API de USNO, evitando desfases con el huso horario
+#            del servidor.
+#   16.6.0 — Se añade estimación de visibilidad de la luna durante el día (visible_de_dia)
+#            y hora de tránsito superior (transit_time) en obtener_fase_lunar().
+#   16.5.0 — Se migra la fuente de fase lunar de wttr.in a USNO (U.S. Naval Observatory)
+#            en la función obtener_fase_lunar() usando la fecha del día actual y
+#            el huso horario local (tz=-6). Se actualizan logs y errores de BD.
+#   16.4.0 — Nueva fuente FUENTE 5 (wttr.in): fase lunar obtenida en tiempo real
+#            vía wttr.in usando las coordenadas de config (LATITUD/LONGITUD).
+#            obtener_fase_lunar() retorna moon_phase, moon_illumination,
+#            moonrise, moonset y fase_etiqueta (texto en español).
+#            Incorporado al dict de recolectar() como clave "lunar".
 #   16.3.0 — Umbrales de cape_etiqueta calibrados para el Altiplano (~2108 m).
 #            La escala NWS/NOAA estándar (<1000 débil / 1000-2499 moderado /
 #            2500-3999 fuerte / ≥4000 extremo) está pensada para nivel del mar.
@@ -116,6 +129,147 @@ def obtener_calidad_aire():
     except Exception as e:
         msg = _sanitizar_error(str(e))
         print(f"[ERROR] - {estado.ts()} Conexión Open-Meteo AQI: {e}")
+        return None, msg
+
+
+# ==========================================
+#   RECOLECCIÓN FASE LUNAR (USNO)
+# ==========================================
+
+# Mapa de fases lunares en inglés → español con etiqueta narrativa
+_FASES_LUNARES = {
+    "New Moon":        ("Luna nueva",         "noche sin luna visible — oscuridad total en cielos despejados"),
+    "Waxing Crescent": ("Luna creciente",      "creciente iluminada"),
+    "First Quarter":   ("Cuarto creciente",    "mitad de la luna iluminada en fase creciente"),
+    "Waxing Gibbous":  ("Gibosa creciente",    "más de la mitad iluminada y aumentando"),
+    "Full Moon":       ("Luna llena",          "noche con iluminación lunar máxima"),
+    "Waning Gibbous":  ("Gibosa menguante",    "más de la mitad iluminada y disminuyendo"),
+    "Last Quarter":    ("Cuarto menguante",    "mitad de la luna iluminada en fase menguante"),
+    "Waning Crescent": ("Luna menguante",      "creciente residual — poca luz lunar"),
+}
+
+
+def obtener_fase_lunar():
+    # type: () -> Tuple[Optional[dict], Optional[str]]
+    """
+    Consulta el Observatorio Naval de EE.UU. (USNO) usando las coordenadas de config
+    y la fecha del día actual para obtener datos de astronomía lunar.
+    No requiere API key.
+
+    Campos extraídos:
+        moon_phase         — nombre en inglés (p.ej. "Full Moon")
+        moon_illumination  — iluminación (string numérico, p.ej. "100")
+        moonrise           — hora de salida de la luna ("HH:MM")
+        moonset            — hora de ocaso de la luna ("HH:MM")
+        transit_time       — hora de tránsito superior ("HH:MM")
+        visible_de_dia     — bool que estima si es visible durante el día
+        fase_nombre        — nombre en español
+        fase_etiqueta      — descripción narrativa en español
+
+    Retorna (datos_lunar, None) en éxito o (None, mensaje_error) en fallo.
+    """
+    def _a_minutos(time_str):
+        if not time_str or time_str == "N/D":
+            return None
+        try:
+            parts = time_str.split(":")
+            return int(parts[0]) * 60 + int(parts[1])
+        except:
+            return None
+
+    tz_mexico = datetime.timezone(datetime.timedelta(hours=-6))
+    hoy = datetime.datetime.now(tz_mexico).strftime("%Y-%m-%d")
+    url = (
+        f"https://aa.usno.navy.mil/api/rstt/oneday"
+        f"?date={hoy}&coords={config.LATITUD},{config.LONGITUD}&tz=-6"
+    )
+    try:
+        res = requests.get(url, timeout=10)
+        if res.status_code == 200:
+            raw = res.json()
+            data_sec = raw.get("properties", {}).get("data", {})
+            phase_en = data_sec.get("curphase", "")
+            illumination = data_sec.get("fracillum", "N/D")
+            if illumination.endswith("%"):
+                illumination = illumination[:-1]
+
+            # Encontrar tiempos en sundata
+            sunrise = "N/D"
+            sunset = "N/D"
+            for item in data_sec.get("sundata", []):
+                phen = item.get("phen", "")
+                if phen == "Rise":
+                    sunrise = item.get("time", "N/D")
+                elif phen == "Set":
+                    sunset = item.get("time", "N/D")
+
+            # Encontrar tiempos de luna
+            moondata = data_sec.get("moondata", [])
+            moonrise = "N/D"
+            moonset = "N/D"
+            transit = "N/D"
+            for item in moondata:
+                phen = item.get("phen", "")
+                if phen == "Rise":
+                    moonrise = item.get("time", "N/D")
+                elif phen == "Set":
+                    moonset = item.get("time", "N/D")
+                elif phen == "Upper Transit":
+                    transit = item.get("time", "N/D")
+
+            # Estimar si es visible de día
+            visible_de_dia = False
+            try:
+                pct = int(illumination)
+                if 10 <= pct <= 90 and phase_en not in ["New Moon", "Full Moon"]:
+                    sol_rise_min = _a_minutos(sunrise)
+                    sol_set_min = _a_minutos(sunset)
+                    luna_rise_min = _a_minutos(moonrise)
+                    luna_set_min = _a_minutos(moonset)
+                    
+                    if sol_rise_min and sol_set_min:
+                        horas_coincidencia = 0
+                        for m in range(sol_rise_min, sol_set_min, 60):
+                            luna_arriba = False
+                            if luna_rise_min and luna_set_min:
+                                if luna_rise_min <= luna_set_min:
+                                    luna_arriba = (luna_rise_min <= m <= luna_set_min)
+                                else:
+                                    luna_arriba = (m >= luna_rise_min or m <= luna_set_min)
+                            elif luna_rise_min:
+                                luna_arriba = (m >= luna_rise_min)
+                            elif luna_set_min:
+                                luna_arriba = (m <= luna_set_min)
+                            
+                            if luna_arriba:
+                                horas_coincidencia += 1
+                        
+                        if horas_coincidencia >= 2:
+                            visible_de_dia = True
+            except:
+                pass
+
+            nombre, etiqueta = _FASES_LUNARES.get(
+                phase_en,
+                (phase_en or "Fase desconocida", "información no disponible")
+            )
+            return {
+                "moon_phase":        phase_en,
+                "moon_illumination": illumination,
+                "moonrise":          moonrise,
+                "moonset":           moonset,
+                "transit_time":      transit,
+                "visible_de_dia":    visible_de_dia,
+                "fase_nombre":       nombre,
+                "fase_etiqueta":     etiqueta,
+            }, None
+        else:
+            msg = _sanitizar_error(f"HTTP {res.status_code}: {res.text[:200]}")
+            print(f"[ERROR] - {estado.ts()} USNO (lunar) devolvió código {res.status_code}")
+            return None, msg
+    except Exception as e:
+        msg = _sanitizar_error(str(e))
+        print(f"[ERROR] - {estado.ts()} Conexión USNO (lunar): {e}")
         return None, msg
 
 
@@ -571,22 +725,26 @@ def volcar_datos_json(datos_web):
 
 def recolectar(conexion_auditoria):
     """
-    Orquesta la recolección de OWM, Open-Meteo AQI y Open-Meteo Forecast.
+    Orquesta la recolección de OWM, Open-Meteo AQI, Open-Meteo Forecast
+    y la fase lunar (USNO).
     Registra en BD los fallos individuales de cada fuente.
 
     Retorna un dict con:
         owm            — dict extraído de OWM (con pressure_etiqueta), o None
         aqi            — dict extraído de AQI (con aod_etiqueta), o None
         forecast       — dict pre-procesado del forecast horario, o dict vacío
+        lunar          — dict de fase lunar (fase_nombre, fase_etiqueta, etc.), o None
         disponible_owm — bool
         disponible_aqi — bool
         disponible_fc  — bool
+        disponible_lunar — bool
     """
     hora_actual = datetime.datetime.now().hour
 
-    datos_owm_raw, error_owm = obtener_clima_owm()
-    datos_aqi_raw, error_aqi = obtener_calidad_aire()
-    datos_fc_raw,  error_fc  = obtener_forecast_horario()
+    datos_owm_raw, error_owm   = obtener_clima_owm()
+    datos_aqi_raw, error_aqi   = obtener_calidad_aire()
+    datos_fc_raw,  error_fc    = obtener_forecast_horario()
+    datos_lunar,   error_lunar = obtener_fase_lunar()
 
     # --- OWM ---
     if datos_owm_raw:
@@ -620,11 +778,23 @@ def recolectar(conexion_auditoria):
         print(f"[SISTEMA] - {estado.ts()} ⚠️  Open-Meteo Forecast no disponible. Se omitirá del guion actual.")
         bd.registrar_error_bd(conexion_auditoria, "OPEN_METEO_FC", error_fc or "Sin respuesta.")
 
+    # --- Fase lunar (USNO) ---
+    if datos_lunar:
+        lunar = datos_lunar
+        disponible_lunar = True
+    else:
+        lunar = None
+        disponible_lunar = False
+        print(f"[SISTEMA] - {estado.ts()} ⚠️  USNO (lunar) no disponible. Se omitirá del guion actual.")
+        bd.registrar_error_bd(conexion_auditoria, "USNO_LUNAR", error_lunar or "Sin respuesta.")
+
     return {
-        "owm":            owm,
-        "aqi":            aqi,
-        "forecast":       forecast,
-        "disponible_owm": disponible_owm,
-        "disponible_aqi": disponible_aqi,
-        "disponible_fc":  disponible_fc,
+        "owm":             owm,
+        "aqi":             aqi,
+        "forecast":        forecast,
+        "lunar":           lunar,
+        "disponible_owm":  disponible_owm,
+        "disponible_aqi":  disponible_aqi,
+        "disponible_fc":   disponible_fc,
+        "disponible_lunar": disponible_lunar,
     }

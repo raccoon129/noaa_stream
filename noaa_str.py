@@ -1,6 +1,12 @@
-# rev 16.1.0
-# rev anterior: rev 16.0.0
+# rev 16.4.0
+# rev anterior: rev 16.3.0
 # Changelog:
+#   16.4.0 — Se pasa lunar en datos_para_bd para persistencia en MySQL.
+#   16.3.0 — Se migra la fuente de fase lunar a USNO (U.S. Naval Observatory), pasándola
+#            como parámetro desde datos_met a prompt.construir_prompt().
+#   16.2.0 — Se extrae lunar de datos_met y se pasa a prompt.construir_prompt()
+#            como parámetro para que la FUENTE 5 (fase lunar) se incluya en el
+#            prompt en horario nocturno.
 #   16.1.0 — Se retira conagua.obtener_pronostico_horario() (method=3 suspendido
 #            por rendimiento en hardware). Se elimina rocio_relevante. modo_nocturno
 #            se conserva: se calcula desde sunset_ts de OWM y controla la perspectiva
@@ -67,10 +73,11 @@ def actualizar_audio_clima():
                 error_conagua or "Sin datos o respuesta vacía."
             )
 
-        # OWM + Open-Meteo (meteorologo gestiona sus propios errores en BD)
+        # OWM + Open-Meteo + Fase Lunar (meteorologo gestiona sus propios errores en BD)
         datos_met = meteorologo.recolectar(conexion_auditoria)
         owm       = datos_met["owm"]
         aqi       = datos_met["aqi"]
+        lunar     = datos_met.get("lunar")
 
         # Extraer hoy y mañana de CONAGUA para uso posterior
         cna_hoy    = datos_conagua["hoy"]    if datos_conagua else None
@@ -116,6 +123,7 @@ def actualizar_audio_clima():
             datos_conagua, owm, aqi, datos_met["forecast"],
             contexto_sismo=contexto,
             modo_nocturno=modo_nocturno,
+            lunar=lunar,
         )
 
         # --------------------------------------------------
@@ -176,6 +184,9 @@ def actualizar_audio_clima():
             "aqi": aqi,
             # Sub-dict Open-Meteo Forecast: None si falló (evita insertar forecast_vacio en BD)
             "forecast": datos_met.get("forecast") if datos_met.get("disponible_fc") else None,
+
+            # Sub-dict Fase Lunar (USNO)
+            "lunar": datos_met.get("lunar") if datos_met.get("disponible_lunar") else None,
         }
 
         # --------------------------------------------------

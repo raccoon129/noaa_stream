@@ -1,6 +1,11 @@
-# rev 16.5.0
-# rev anterior: rev 16.4.0
+# rev 16.8.0
+# rev anterior: rev 16.7.0
 # Changelog:
+#   16.8.0 — Se permite la inclusión del bloque lunar de día si la luna es visible
+#            (visible_de_dia). Se expande _bloque_lunar() con transit_time y la bandera
+#            visible_de_dia. Se rediseña la Regla 16 para guiar la mención tanto en
+#            modo nocturno como en modo diurno (cuando es visible).
+#   16.7.0 — Se actualizan las referencias de FUENTE 5 de wttr.in a USNO.
 #   16.5.0 — _bloque_owm(): presión fusionada en una sola línea con formato
 #            "X hPa | etiqueta" (antes eran dos líneas separadas). 
 #            _bloque_aqi(): AOD fusionado en una sola línea con formato
@@ -294,6 +299,40 @@ def _bloque_forecast(fc):
 
 
 # ==========================================
+#   BLOQUE DE FASE LUNAR
+# ==========================================
+
+def _bloque_lunar(lunar):
+    """
+    Genera el bloque de fase lunar para el prompt.
+    Se llama en modo nocturno, o de día si la luna es visible a la luz del sol.
+    Si no hay datos, retorna un aviso neutro que instruye a omitirla.
+    """
+    if not lunar:
+        return (
+            "FUENTE 5 (USNO - Fase Lunar): [NO DISPONIBLE] "
+            "Omite cualquier mención de la fase lunar en este reporte."
+        )
+    visible_dia_txt = "SÍ (es visible a plena luz del día)" if lunar.get("visible_de_dia") else "NO"
+    return (
+        "FUENTE 5 (USNO - Fase Lunar):\n"
+        "- Fase lunar: {0} ({1}%)\n"
+        "- Salida de la luna: {2} | Ocaso de la luna: {3}\n"
+        "- Tránsito más alto (cenit): {4}\n"
+        "- ¿Visible de día hoy?: {5}\n"
+        "- Descripción de la fase: {6}"
+    ).format(
+        lunar["fase_nombre"],
+        lunar["moon_illumination"],
+        lunar["moonrise"],
+        lunar["moonset"],
+        lunar.get("transit_time", "N/D"),
+        visible_dia_txt,
+        lunar["fase_etiqueta"],
+    )
+
+
+# ==========================================
 #   REGLA DE RESOLUCIÓN DE CONFLICTO DE LLUVIA
 # ==========================================
 
@@ -374,9 +413,10 @@ def _bloque_sismo(contexto_sismo: Optional[dict]) -> str:
 # ==========================================
 
 def construir_prompt(cna, owm, aqi, forecast=None, contexto_sismo=None,
-                     modo_nocturno=False):
+                     modo_nocturno=False, lunar=None):
     """
     Ensambla el prompt completo para el modelo de IA.
+    v16.6: añade parámetro lunar (dict de fase lunar o None).
     v16.1: se retiran cna_hora y rocio_relevante (method=3 suspendido).
 
     Parámetros:
@@ -386,6 +426,7 @@ def construir_prompt(cna, owm, aqi, forecast=None, contexto_sismo=None,
         forecast       — dict pre-procesado del forecast horario o None
         contexto_sismo — dict con datos del sismo reciente o None
         modo_nocturno  — True si hora_actual >= sunset → perspectiva de mañana ampliada
+        lunar          — dict de fase lunar de USNO o None
 
     Retorna el texto del prompt listo para enviar a Gemini/Groq.
     """
@@ -399,6 +440,13 @@ def construir_prompt(cna, owm, aqi, forecast=None, contexto_sismo=None,
     regla_lluvia = _regla_lluvia(owm, cna)
     bloque_sis   = _bloque_sismo(contexto_sismo)
 
+    # La fase lunar se incluye en el prompt en modo nocturno o si es visible de día
+    luna_visible_dia = lunar.get("visible_de_dia", False) if lunar else False
+    if modo_nocturno or luna_visible_dia:
+        bloque_lunar_txt = "\n" + _bloque_lunar(lunar) + "\n"
+    else:
+        bloque_lunar_txt = ""
+
     prompt = (
         "Eres el sistema automatizado de alerta meteorológica regional. "
         "Escribe un reporte de radio (NO mencionar palabras como 'radioescuchas' o similares) muy detallado para {ciudad} y alrededores. Evita ser redundante en la redacción y personaliza según la hora actual.\n\n"
@@ -407,7 +455,8 @@ def construir_prompt(cna, owm, aqi, forecast=None, contexto_sismo=None,
         "{owm}\n\n"
         "FUENTE 3 (Open-Meteo - Salud Ambiental y Radiación):\n"
         "{aqi}\n\n"
-        "{fc}\n\n"
+        "{fc}\n"
+        "{lunar}"
         "REGLAS PARA LA REDACCIÓN (CRÍTICAS):\n"
         "1. Inicia con un saludo formal simple según la hora del día (buenos dias/tardes/noches).\n"
         "{regla_lluvia}\n"
@@ -484,6 +533,13 @@ def construir_prompt(cna, owm, aqi, forecast=None, contexto_sismo=None,
         "úsalo para enriquecer la narrativa de helada (p. ej. señalar qué tan próxima está la "
         "isoterma a la altitud de la localidad ~{altitud_m} m s.n.m.). Mencionalo siempre en lenguaje accesible.\n\n"
 
+        "16. Fase lunar (FUENTE 5): Si la FUENTE 5 está disponible, incorpórala de forma natural:\n"
+        "   - DE NOCHE: Menciona la fase lunar de forma integrada al reporte de condiciones nocturnas, "
+        "considerando la nubosidad actual de la FUENTE 2. Si el cielo está despejado o parcialmente nublado, describe cómo su visibilidad "
+        "o iluminación se ve afectada por las nubes o favorece la luminosidad de la noche. Incluye la hora de salida o de ocaso de la luna. \n"
+        "   - DE DÍA (Solo si '¿Visible de día hoy?' es SÍ): Menciona que la luna es visible "
+        "en el cielo diurno, describiendo su fase y cómo se ve afectada por la nubosidad actual de la FUENTE 2. Si es de día y marca '¿Visible de día hoy?: NO', NO menciones la luna en absoluto.\n\n"
+
         "Al inicio de la redacción, antes del saludo, coloca exactamente la siguiente "
         "cortinilla institucional:\n"
         "\"Sistema automatizado de monitoreo climatológico preliminar con motivos de estudio; "
@@ -500,6 +556,7 @@ def construir_prompt(cna, owm, aqi, forecast=None, contexto_sismo=None,
         owm=bloque_owm,
         aqi=bloque_aqi,
         fc=bloque_fc,
+        lunar=bloque_lunar_txt,
         regla_lluvia=regla_lluvia,
         hora=hora_exacta,
         fm=config.FRECUENCIA_FM,
