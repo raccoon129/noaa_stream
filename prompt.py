@@ -1,10 +1,14 @@
-# rev 16.8.0
-# rev anterior: rev 16.7.0
+# rev 16.9.0
+# rev anterior: rev 16.8.0
 # Changelog:
+#   16.9.0 — _bloque_lunar() ampliado con tres líneas nuevas provenientes de USNO:
+#            crepúsculo civil (inicio y fin), mediodía solar y fase lunar más cercana.
+#            La fase cercana es condicional: solo se incluye si fase_cercana_dias
+#            está en el rango [-1, 3] (de ayer a 3 días adelante). Fuera de ese rango
+#            se omite para no saturar el guion con datos sin relevancia inmediata.
 #   16.8.0 — Se permite la inclusión del bloque lunar de día si la luna es visible
 #            (visible_de_dia). Se expande _bloque_lunar() con transit_time y la bandera
-#            visible_de_dia. Se rediseña la Regla 16 para guiar la mención tanto en
-#            modo nocturno como en modo diurno (cuando es visible).
+#            visible_de_dia. Se rediseña la Regla 16.
 #   16.7.0 — Se actualizan las referencias de FUENTE 5 de wttr.in a USNO.
 #   16.5.0 — _bloque_owm(): presión fusionada en una sola línea con formato
 #            "X hPa | etiqueta" (antes eran dos líneas separadas). 
@@ -305,22 +309,50 @@ def _bloque_forecast(fc):
 def _bloque_lunar(lunar):
     """
     Genera el bloque de fase lunar para el prompt.
+    v16.9: incluye crepúsculo civil, mediodía solar y fase lunar más cercana
+           (esta última solo si está en rango [-1, 3] días respecto a hoy).
     Se llama en modo nocturno, o de día si la luna es visible a la luz del sol.
     Si no hay datos, retorna un aviso neutro que instruye a omitirla.
     """
     if not lunar:
         return (
-            "FUENTE 5 (USNO - Fase Lunar): [NO DISPONIBLE] "
+            "FUENTE 5 (USNO/Observatorio Naval de los Estados Unidos - Fase Lunar): [NO DISPONIBLE] "
             "Omite cualquier mención de la fase lunar en este reporte."
         )
     visible_dia_txt = "SÍ (es visible a plena luz del día)" if lunar.get("visible_de_dia") else "NO"
+
+    # Línea condicional de fase cercana: solo si es narrativamente relevante [-1, 3] días
+    dias = lunar.get("fase_cercana_dias")
+    linea_fase_cercana = ""
+    if dias is not None and -1 <= dias <= 3:
+        nombre_fc = lunar.get("fase_cercana_nombre", "")
+        hora_fc   = lunar.get("fase_cercana_hora", "N/D") or "N/D"
+        if dias == -1:
+            cuando = "ayer"
+        elif dias == 0:
+            cuando = "hoy"
+        elif dias == 1:
+            cuando = "mañana"
+        elif dias == 2:
+            cuando = "pasado mañana"
+        else:
+            cuando = "en {0} días".format(dias)
+        linea_fase_cercana = (
+            "\n- Próxima fase lunar destacada: {0} ocurre {1} a las {2}".format(
+                nombre_fc, cuando, hora_fc
+            )
+        )
+
     return (
-        "FUENTE 5 (USNO - Fase Lunar):\n"
+        "FUENTE 5 (USNO/Observatorio Naval de los Estados Unidos - Fase Lunar):\n"
         "- Fase lunar: {0} ({1}%)\n"
         "- Salida de la luna: {2} | Ocaso de la luna: {3}\n"
         "- Tránsito más alto (cenit): {4}\n"
         "- ¿Visible de día hoy?: {5}\n"
-        "- Descripción de la fase: {6}"
+        "- Descripción de la fase: {6}\n"
+        "- Crepúsculo civil: inicio {7} | fin {8}\n"
+        "- Mediodía solar: {9}"
+        "{10}"
     ).format(
         lunar["fase_nombre"],
         lunar["moon_illumination"],
@@ -329,6 +361,10 @@ def _bloque_lunar(lunar):
         lunar.get("transit_time", "N/D"),
         visible_dia_txt,
         lunar["fase_etiqueta"],
+        lunar.get("crepusculo_inicio", "N/D"),
+        lunar.get("crepusculo_fin", "N/D"),
+        lunar.get("mediodia_solar", "N/D"),
+        linea_fase_cercana,
     )
 
 
@@ -399,11 +435,11 @@ def _bloque_sismo(contexto_sismo: Optional[dict]) -> str:
         f"CONTEXTO SÍSMICO RECIENTE (CRÍTICO - INYECTAR AL INICIO DEL REPORTE, DESPUÉS DE LA HORA Y FECHA):\n"
         f"Ha ocurrido un sismo recientemente de {mag_str} con epicentro en {epicentro}.\n"
         f"{extras_str}"
-        "Regla especial: Inicia tu reporte meteorológico informando brevemente sobre este evento. "
-        "Usa una frase como: 'Antes de iniciar con las condiciones meteorológicas, informamos que un sismo de "
+        "Regla especial: Inicia el reporte meteorológico informando brevemente sobre este evento. "
+        "Genera un párrafo introfuctorio sobre el evento y posteriormente la explicación con los datos:"
         f"{mag_str} fue registrado recientemente con epicentro en {epicentro}...'. "
         "Añade que 'El reporte detallado con información de agencias sismológicas internacionales "
-        "estará disponible en la próxima actualización de esta frecuencia'. "
+        "estará disponible en la próxima actualización'. "
         "Tras esta breve mención, continúa fluidamente con el reporte del clima habitual.\n"
     )
 
@@ -533,12 +569,28 @@ def construir_prompt(cna, owm, aqi, forecast=None, contexto_sismo=None,
         "úsalo para enriquecer la narrativa de helada (p. ej. señalar qué tan próxima está la "
         "isoterma a la altitud de la localidad ~{altitud_m} m s.n.m.). Mencionalo siempre en lenguaje accesible.\n\n"
 
-        "16. Fase lunar (FUENTE 5): Si la FUENTE 5 está disponible, incorpórala de forma natural:\n"
-        "   - DE NOCHE: Menciona la fase lunar de forma integrada al reporte de condiciones nocturnas, "
-        "considerando la nubosidad actual de la FUENTE 2. Si el cielo está despejado o parcialmente nublado, describe cómo su visibilidad "
-        "o iluminación se ve afectada por las nubes o favorece la luminosidad de la noche. Incluye la hora de salida o de ocaso de la luna. \n"
-        "   - DE DÍA (Solo si '¿Visible de día hoy?' es SÍ): Menciona que la luna es visible "
-        "en el cielo diurno, describiendo su fase y cómo se ve afectada por la nubosidad actual de la FUENTE 2. Si es de día y marca '¿Visible de día hoy?: NO', NO menciones la luna en absoluto.\n\n"
+        "16. Fase lunar y astronomía solar (FUENTE 5): Si la FUENTE 5 está disponible, incorpórala de forma natural:\n"
+        "   - FASE LUNAR DE NOCHE: Menciona la fase lunar integrada a las condiciones nocturnas, "
+        "considerando la nubosidad actual de la FUENTE 2. Describe cómo la iluminación lunar afecta "
+        "la luminosidad de la noche o se ve limitada por las nubes. Incluye la hora de salida o de ocaso de la luna.\n"
+        "   - FASE LUNAR DE DÍA (Solo si '¿Visible de día hoy?' es SÍ): Menciona que la luna es visible "
+        "en el cielo diurno, describiendo su fase y cómo la nubosidad la afecta. "
+        "Si es de día y marca '¿Visible de día hoy?: NO', NO menciones la luna en absoluto.\n"
+        "   - CREPÚSCULO CIVIL AL AMANECER: Si la hora del reporte está entre el 'Crepúsculo civil inicio' "
+        "y la hora de salida del sol (FUENTE 2 amanecer), menciona que la luz del día ya comienza a asomar "
+        "aunque el sol todavía no ha salido. Es el momento ideal para quienes madrugan. "
+        "Usa la hora exacta de inicio del crepúsculo para darle precisión al dato.\n"
+        "   - CREPÚSCULO CIVIL AL ANOCHECER: Si la hora del reporte está entre la puesta del sol (FUENTE 2 atardecer) "
+        "y el 'Crepúsculo civil fin', menciona que aún hay luz natural residual en el cielo "
+        "aunque el sol ya se ocultó. Útil para quienes regresan a casa o todavía realizan actividades en el exterior.\n"
+        "   - MEDIODÍA SOLAR: Si la hora del reporte está entre las 11:30 y las 13:30, "
+        "menciona que el sol está en o cerca de su punto más alto del día (hora exacta del mediodía solar de la FUENTE 5). "
+        "Es el momento de mayor radiación UV y sombras más cortas. Incorpóralo al párrafo de condiciones actuales "
+        "o de calidad del aire, no como dato aislado.\n"
+        "   - FASE LUNAR CERCANA: Si la FUENTE 5 incluye la línea 'Próxima fase lunar destacada', "
+        "menciónala de forma breve y natural al final del bloque lunar. "
+        "Usa el lenguaje de proximidad (hoy, mañana, pasado mañana, ayer) que ya indica la fuente. "
+        "No la menciones si la línea no está presente en la FUENTE 5.\n\n"
 
         "Al inicio de la redacción, antes del saludo, coloca exactamente la siguiente "
         "cortinilla institucional:\n"

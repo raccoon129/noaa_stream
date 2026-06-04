@@ -1,9 +1,9 @@
 -- ============================================================
 -- NOAA Stream — Esquema completo de base de datos
 -- Base: drift3_26noaa.sql (dump 2026-05-03)
--- Incluye: migration_v5_sismo + migration_v16 + migration_v17 + migration_v18
--- Versión final: v18.0.0
--- Fecha de consolidación: 2026-05-31
+-- Incluye: migration_v5_sismo + migration_v16 + migration_v17 + migration_v18 + migration_v19
+-- Versión final: v19.0.0
+-- Fecha de consolidación: 2026-06-04
 --
 -- ORDEN DE CONTENIDO:
 --   0. Configuración de sesión
@@ -266,25 +266,40 @@ CREATE TABLE IF NOT EXISTS `datos_forecast_openmeteo` (
 
 
 -- ============================================================
--- 4. datos_fase_lunar (v18)
+-- 4. datos_fase_lunar (v18 + v19)
 -- ============================================================
 -- Migration v18: Creación de la tabla datos_fase_lunar
+-- Migration v19: Añade crepúsculo civil, mediodía solar, día de semana
+--               y fase lunar más cercana (todos desde USNO)
 CREATE TABLE IF NOT EXISTS `datos_fase_lunar` (
   `id`                     int(10) UNSIGNED NOT NULL AUTO_INCREMENT,
   `reporte_id`             int(10) UNSIGNED NOT NULL,
-  `fase_nombre`            varchar(100)     DEFAULT NULL COMMENT 'Nombre de la fase en español',
-  `fase_ingles`            varchar(100)     DEFAULT NULL COMMENT 'Nombre de la fase en inglés',
-  `iluminacion_porcentaje` tinyint(3)       DEFAULT NULL COMMENT 'Porcentaje de iluminación (0-100)',
-  `salida_luna`            time             DEFAULT NULL COMMENT 'Hora de salida de la luna',
-  `ocaso_luna`             time             DEFAULT NULL COMMENT 'Hora de ocaso de la luna',
-  `transito_luna`          time             DEFAULT NULL COMMENT 'Hora del cenit lunar',
-  `visible_de_dia`         tinyint(1)       DEFAULT NULL COMMENT '1 si es visible de día, 0 si no',
-  `fase_etiqueta`          varchar(255)     DEFAULT NULL COMMENT 'Descripción de la fase',
+
+  -- Campos base (v18) — recuperados desde USNO
+  `fase_nombre`            varchar(100)     DEFAULT NULL COMMENT 'Nombre de la fase en español — USNO curphase',
+  `fase_ingles`            varchar(100)     DEFAULT NULL COMMENT 'Nombre de la fase en inglés — USNO curphase',
+  `iluminacion_porcentaje` tinyint(3)       DEFAULT NULL COMMENT 'Porcentaje de iluminación (0-100) — USNO fracillum',
+  `salida_luna`            time             DEFAULT NULL COMMENT 'Hora de salida de la luna — USNO moondata Rise',
+  `ocaso_luna`             time             DEFAULT NULL COMMENT 'Hora de ocaso de la luna — USNO moondata Set',
+  `transito_luna`          time             DEFAULT NULL COMMENT 'Hora del cénit lunar — USNO moondata Upper Transit',
+  `visible_de_dia`         tinyint(1)       DEFAULT NULL COMMENT '1 si es visible de día, 0 si no — calculado en Python',
+  `fase_etiqueta`          varchar(255)     DEFAULT NULL COMMENT 'Descripción narrativa de la fase — mapa interno Python',
+
+  -- Campos nuevos (v19) — recuperados desde USNO
+  `crepusculo_inicio`      time             DEFAULT NULL COMMENT 'Inicio del crepúsculo civil — USNO sundata "Begin Civil Twilight"',
+  `crepusculo_fin`         time             DEFAULT NULL COMMENT 'Fin del crepúsculo civil — USNO sundata "End Civil Twilight"',
+  `mediodia_solar`         time             DEFAULT NULL COMMENT 'Mediodía solar (tránsito superior del sol) — USNO sundata "Upper Transit"',
+  `dia_semana`             varchar(20)      DEFAULT NULL COMMENT 'Día de la semana en inglés — USNO data.day_of_week',
+  `fase_cercana_nombre`    varchar(60)      DEFAULT NULL COMMENT 'Nombre en español de la fase lunar más próxima — USNO closestphase.phase',
+  `fase_cercana_fecha`     date             DEFAULT NULL COMMENT 'Fecha exacta de la fase más próxima — USNO closestphase day/month/year',
+  `fase_cercana_hora`      time             DEFAULT NULL COMMENT 'Hora de la fase más próxima — USNO closestphase.time',
+  `fase_cercana_dias`      smallint         DEFAULT NULL COMMENT 'Días hasta la fase (negativo = ya ocurrió, 0 = hoy) — calculado en Python',
+
   PRIMARY KEY (`id`),
   UNIQUE KEY `uq_reporte` (`reporte_id`),
   CONSTRAINT `fk_fase_lunar_reporte` FOREIGN KEY (`reporte_id`) REFERENCES `reportes_climatologicos` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-  COMMENT='Datos de astronomía y fase lunar por reporte climatológico';
+  COMMENT='Datos de astronomía y fase lunar por reporte climatológico — Fuente: USNO (aa.usno.navy.mil)';
 
 
 -- ============================================================

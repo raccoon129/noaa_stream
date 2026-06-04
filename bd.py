@@ -1,9 +1,10 @@
-# rev 16.4.0
-# rev anterior: rev 16.3.0
+# rev 16.5.0
+# rev anterior: rev 16.4.0
 # Changelog:
-#   16.4.0 — Se agrega inserción de datos de fase lunar en la tabla datos_lunar en
-#            guardar_reporte_en_bd(). Se define el helper _limpiar_hora_bd() para
-#            limpiar valores TIME de MySQL. Requiere la migración v18 en BD.
+#   16.5.0 — INSERT de datos_fase_lunar ampliado con las 8 columnas de migración v19:
+#            crepusculo_inicio, crepusculo_fin, mediodia_solar, dia_semana,
+#            fase_cercana_nombre, fase_cercana_fecha, fase_cercana_hora,
+#            fase_cercana_dias. Todos provienen de la API USNO.
 #   16.3.0 — guardar_condicion_especial() generalizado: datos_sassla → datos_fuente_primaria,
 #            datos_ssn → datos_fuente_secundaria. Se agrega fuente_alerta (sistema que emitió
 #            la alerta: SASSLA, CONAGUA, CENAPRED, etc.) y guion_analisis/prompt_analisis
@@ -301,11 +302,19 @@ def guardar_reporte_en_bd(datos_reporte: dict) -> Optional[int]:
                        reporte_id,
                        fase_nombre, fase_ingles, iluminacion_porcentaje,
                        salida_luna, ocaso_luna, transito_luna,
-                       visible_de_dia, fase_etiqueta
+                       visible_de_dia, fase_etiqueta,
+                       crepusculo_inicio, crepusculo_fin, mediodia_solar,
+                       dia_semana,
+                       fase_cercana_nombre, fase_cercana_fecha,
+                       fase_cercana_hora, fase_cercana_dias
                    ) VALUES (
                        %s,
                        %s, %s, %s,
                        %s, %s, %s,
+                       %s, %s,
+                       %s, %s, %s,
+                       %s,
+                       %s, %s,
                        %s, %s
                    )""",
                 (
@@ -318,6 +327,14 @@ def guardar_reporte_en_bd(datos_reporte: dict) -> Optional[int]:
                     _limpiar_hora_bd(lunar.get("transit_time")),
                     1 if lunar.get("visible_de_dia") else 0,
                     lunar.get("fase_etiqueta"),
+                    _limpiar_hora_bd(lunar.get("crepusculo_inicio")),
+                    _limpiar_hora_bd(lunar.get("crepusculo_fin")),
+                    _limpiar_hora_bd(lunar.get("mediodia_solar")),
+                    lunar.get("dia_semana"),
+                    lunar.get("fase_cercana_nombre"),
+                    lunar.get("fase_cercana_fecha"),
+                    _limpiar_hora_bd(lunar.get("fase_cercana_hora")),
+                    lunar.get("fase_cercana_dias"),
                 ),
             )
             conexion.commit()

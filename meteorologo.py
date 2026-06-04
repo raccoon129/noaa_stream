@@ -1,9 +1,12 @@
-# rev 16.7.0
-# rev anterior: rev 16.6.0
+# rev 16.8.0
+# rev anterior: rev 16.7.0
 # Changelog:
-#   16.7.0 — Se fuerza a obtener_fase_lunar() a usar la fecha local de México (UTC-6)
-#            para la consulta a la API de USNO, evitando desfases con el huso horario
-#            del servidor.
+#   16.8.0 — obtener_fase_lunar() amplía la extracción de la respuesta USNO con:
+#            crepusculo_inicio/fin (sundata "Begin/End Civil Twilight"),
+#            mediodia_solar (sundata "Upper Transit"), dia_semana (data.day_of_week)
+#            y los campos de closestphase: fase_cercana_nombre, fase_cercana_fecha,
+#            fase_cercana_hora y fase_cercana_dias (delta entero respecto a hoy;
+#            negativo = pasado). Requiere migración v19 en BD.
 #   16.6.0 — Se añade estimación de visibilidad de la luna durante el día (visible_de_dia)
 #            y hora de tránsito superior (transit_time) en obtener_fase_lunar().
 #   16.5.0 — Se migra la fuente de fase lunar de wttr.in a USNO (U.S. Naval Observatory)
@@ -194,14 +197,23 @@ def obtener_fase_lunar():
                 illumination = illumination[:-1]
 
             # Encontrar tiempos en sundata
-            sunrise = "N/D"
-            sunset = "N/D"
+            sunrise          = "N/D"
+            sunset           = "N/D"
+            crepusculo_inicio = "N/D"
+            crepusculo_fin    = "N/D"
+            mediodia_solar    = "N/D"
             for item in data_sec.get("sundata", []):
                 phen = item.get("phen", "")
                 if phen == "Rise":
                     sunrise = item.get("time", "N/D")
                 elif phen == "Set":
                     sunset = item.get("time", "N/D")
+                elif phen == "Begin Civil Twilight":
+                    crepusculo_inicio = item.get("time", "N/D")
+                elif phen == "End Civil Twilight":
+                    crepusculo_fin = item.get("time", "N/D")
+                elif phen == "Upper Transit":
+                    mediodia_solar = item.get("time", "N/D")
 
             # Encontrar tiempos de luna
             moondata = data_sec.get("moondata", [])
@@ -253,15 +265,46 @@ def obtener_fase_lunar():
                 phase_en,
                 (phase_en or "Fase desconocida", "información no disponible")
             )
+
+            # Fase lunar más cercana (USNO closestphase)
+            dia_semana = data_sec.get("day_of_week", "N/D")
+            cp = data_sec.get("closestphase", {})
+            fase_cercana_ingles = cp.get("phase", "") or ""
+            fase_cercana_nombre = (
+                _FASES_LUNARES.get(fase_cercana_ingles, (fase_cercana_ingles, ""))[0]
+                if fase_cercana_ingles else None
+            )
+            fase_cercana_hora_str = cp.get("time")
+            fase_cercana_fecha    = None
+            fase_cercana_dias     = None
+            if cp.get("day") and cp.get("month") and cp.get("year"):
+                try:
+                    import datetime as _dt
+                    fecha_fase       = _dt.date(cp["year"], cp["month"], cp["day"])
+                    fecha_hoy_local  = datetime.datetime.now(tz_mexico).date()
+                    fase_cercana_dias  = (fecha_fase - fecha_hoy_local).days
+                    fase_cercana_fecha = fecha_fase.strftime("%Y-%m-%d")
+                except Exception:
+                    pass
+
             return {
-                "moon_phase":        phase_en,
-                "moon_illumination": illumination,
-                "moonrise":          moonrise,
-                "moonset":           moonset,
-                "transit_time":      transit,
-                "visible_de_dia":    visible_de_dia,
-                "fase_nombre":       nombre,
-                "fase_etiqueta":     etiqueta,
+                "moon_phase":           phase_en,
+                "moon_illumination":    illumination,
+                "moonrise":             moonrise,
+                "moonset":              moonset,
+                "transit_time":         transit,
+                "visible_de_dia":       visible_de_dia,
+                "fase_nombre":          nombre,
+                "fase_etiqueta":        etiqueta,
+                "crepusculo_inicio":    crepusculo_inicio,
+                "crepusculo_fin":       crepusculo_fin,
+                "mediodia_solar":       mediodia_solar,
+                "dia_semana":           dia_semana,
+                "fase_cercana_ingles":  fase_cercana_ingles or None,
+                "fase_cercana_nombre":  fase_cercana_nombre,
+                "fase_cercana_fecha":   fase_cercana_fecha,
+                "fase_cercana_hora":    fase_cercana_hora_str,
+                "fase_cercana_dias":    fase_cercana_dias,
             }, None
         else:
             msg = _sanitizar_error(f"HTTP {res.status_code}: {res.text[:200]}")
