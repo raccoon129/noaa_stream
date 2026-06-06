@@ -574,7 +574,7 @@ def construir_prompt(cna, owm, aqi, forecast=None, contexto_sismo=None,
         "considerando la nubosidad actual de la FUENTE 2. Describe cómo la iluminación lunar afecta "
         "la luminosidad de la noche o se ve limitada por las nubes. Incluye la hora de salida o de ocaso de la luna.\n"
         "   - FASE LUNAR DE DÍA (Solo si '¿Visible de día hoy?' es SÍ): Menciona que la luna es visible "
-        "en el cielo diurno, describiendo su fase y cómo la nubosidad la afecta. Si no es visible en lo absoluto debido a la nubosidad, puedes ignorar esta parte."
+        "en el cielo diurno, describiendo su fase y cómo la nubosidad la afecta. Si no es visible en lo absoluto debido a la gran nubosidad, OMITE la mención de esta parte por completo."
         "Si es de día y marca '¿Visible de día hoy?: NO', NO menciones la luna en absoluto.\n"
         "   - CREPÚSCULO CIVIL AL AMANECER: Si la hora del reporte está entre el 'Crepúsculo civil inicio' "
         "y la hora de salida del sol (FUENTE 2 amanecer), menciona que la luz del día ya comienza a asomar "
