@@ -454,7 +454,7 @@ def iniciar_estacion():
                     f"\n[DJ] - {estado.ts()} 🎙️  Transmitiendo Reporte Sísmico Intercalado "
                     f"(Ciclo {i + 1}/3 | Total histórico: #{contador_reportes})"
                 )
-                dj.inyectar_audio_al_stream(config.ARCHIVO_SISMO_REPORTE)
+                dj.inyectar_audio_al_stream(config.ARCHIVO_SISMO_REPORTE, es_alarma=True)
             else:
                 contador_reportes += 1
                 print(
