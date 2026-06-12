@@ -1,6 +1,12 @@
-# rev 15.1.0
-# rev anterior: rev 15.0.0
+# rev 15.2.0
+# rev anterior: rev 15.1.0
 # Changelog:
+#   15.2.0 — Cascada de fallback ampliada a 4 pasos:
+#            Gemini principal → Gemini respaldo → Gemini extra (opcional) → Groq.
+#            El paso "extra" usa MODELO_GEMINI_EXTRA de config.py; si está vacío
+#            o no definido, se omite silenciosamente sin afectar los demás pasos.
+#            _generar_gemini() ahora usa un nivel entero (0/1/2) en lugar de un
+#            flag booleano, permitiendo escalar limpiamente a N modelos futuros.
 #   15.1.0 — Anotaciones de tipo migradas a Optional/Tuple de typing
 #            para compatibilidad con Python 3.9 (Raspberry Pi OS).
 #   15.0.0 — Extracción de la generación de guiones a módulo independiente.
@@ -57,17 +63,53 @@ def _generar_groq(prompt):
 
 
 # ==========================================
-#   GEMINI (principal y respaldo)
+#   GEMINI (principal, respaldo y extra)
 # ==========================================
 
-def _generar_gemini(prompt, usar_respaldo=False):
-    # type: (str, bool) -> Tuple[Optional[str], str, Optional[str]]
+# Tabla de etiquetas por nivel para los mensajes de log.
+# nivel 0 → MODELO_GEMINI (principal)
+# nivel 1 → MODELO_GEMINI_RESPALDO
+# nivel 2 → MODELO_GEMINI_EXTRA (opcional; se salta si está vacío o no definido)
+_NIVEL_LABELS = {0: "principal", 1: "respaldo", 2: "extra"}
+
+
+def _modelo_para_nivel(nivel):
+    # type: (int) -> Optional[str]
+    """Retorna el nombre del modelo Gemini para el nivel dado, o None si no aplica."""
+    if nivel == 0:
+        return config.MODELO_GEMINI
+    if nivel == 1:
+        return config.MODELO_GEMINI_RESPALDO
+    if nivel == 2:
+        # getattr con default "" para tolerar configs que no definen MODELO_GEMINI_EXTRA
+        return getattr(config, "MODELO_GEMINI_EXTRA", "") or None
+    return None
+
+
+def _generar_gemini(prompt, nivel=0):
+    # type: (str, int) -> Tuple[Optional[str], str, Optional[str]]
     """
     Genera el guion vía la API REST de Gemini.
-    Cascada interna: modelo principal → modelo respaldo → Groq de emergencia.
+    Cascada por nivel: 0 (principal) → 1 (respaldo) → 2 (extra, opcional) → Groq.
+
+    El nivel 2 (extra) se salta automáticamente si MODELO_GEMINI_EXTRA está
+    vacío o no definido en config.py, sin necesidad de modificar esta función.
+
     Retorna (texto_guion, modelo_usado, mensaje_error).
     """
-    modelo_actual = config.MODELO_GEMINI_RESPALDO if usar_respaldo else config.MODELO_GEMINI
+    modelo_actual = _modelo_para_nivel(nivel)
+
+    # Si el nivel solicitado no tiene modelo configurado (ej. extra vacío), avanzar
+    if not modelo_actual:
+        siguiente = nivel + 1
+        modelo_siguiente = _modelo_para_nivel(siguiente)
+        if modelo_siguiente:
+            label = _NIVEL_LABELS.get(siguiente, str(siguiente))
+            print(f"[SISTEMA] - {estado.ts()} ⚠️  Nivel {nivel} sin modelo configurado. Activando Gemini {label}...")
+            return _generar_gemini(prompt, nivel=siguiente)
+        print(f"[SISTEMA] - {estado.ts()} 🚨 Sin más modelos Gemini disponibles. Activando modelo de EMERGENCIA Groq...")
+        return _generar_groq(prompt)
+
     url = (
         "https://generativelanguage.googleapis.com/v1beta/models/"
         "{0}:generateContent?key={1}".format(modelo_actual, config.GEMINI_API_KEY)
@@ -75,29 +117,34 @@ def _generar_gemini(prompt, usar_respaldo=False):
     headers = {"Content-Type": "application/json"}
     payload = {"contents": [{"parts": [{"text": prompt}]}]}
 
+    def _siguiente_escalon():
+        # type: () -> Tuple[Optional[str], str, Optional[str]]
+        """Escala al siguiente nivel Gemini o a Groq si ya no hay más."""
+        siguiente = nivel + 1
+        modelo_siguiente = _modelo_para_nivel(siguiente)
+        if modelo_siguiente:
+            label = _NIVEL_LABELS.get(siguiente, str(siguiente))
+            print(f"[SISTEMA] - {estado.ts()} ⚠️  Activando Gemini {label} ({modelo_siguiente})...")
+            return _generar_gemini(prompt, nivel=siguiente)
+        print(f"[SISTEMA] - {estado.ts()} 🚨 Todos los modelos Gemini fallaron. Activando modelo de EMERGENCIA Groq...")
+        return _generar_groq(prompt)
+
     try:
         respuesta = requests.post(url, headers=headers, json=payload, timeout=30)
         if respuesta.status_code == 200:
             texto = respuesta.json()["candidates"][0]["content"]["parts"][0]["text"]
-            print(f"[IA] - {estado.ts()} ✅ Guion generado con éxito por: {modelo_actual}")
+            label = _NIVEL_LABELS.get(nivel, str(nivel))
+            print(f"[IA] - {estado.ts()} ✅ Guion generado con éxito por Gemini {label}: {modelo_actual}")
             return texto, modelo_actual, None
         else:
             msg = _sanitizar_error(f"HTTP {respuesta.status_code}: {respuesta.text[:300]}")
             print(f"[ERROR] - {estado.ts()} API Gemini ({modelo_actual}) devolvió código {respuesta.status_code}")
-            if not usar_respaldo:
-                print(f"[SISTEMA] - {estado.ts()} ⚠️  Activando modelo Gemini de RESPALDO...")
-                return _generar_gemini(prompt, usar_respaldo=True)
-            print(f"[SISTEMA] - {estado.ts()} 🚨 Ambos modelos Gemini fallaron. Activando modelo de EMERGENCIA Groq...")
-            return _generar_groq(prompt)
+            return _siguiente_escalon()
 
     except Exception as e:
         msg = _sanitizar_error(str(e))
         print(f"[ERROR] - {estado.ts()} Falló la petición a Gemini ({modelo_actual}): {e}")
-        if not usar_respaldo:
-            print(f"[SISTEMA] - {estado.ts()} ⚠️  Activando modelo Gemini de RESPALDO...")
-            return _generar_gemini(prompt, usar_respaldo=True)
-        print(f"[SISTEMA] - {estado.ts()} 🚨 Ambos modelos Gemini fallaron. Activando modelo de EMERGENCIA Groq...")
-        return _generar_groq(prompt)
+        return _siguiente_escalon()
 
 
 # ==========================================
@@ -108,10 +155,14 @@ def generar_guion(prompt):
     # type: (str) -> Tuple[Optional[str], str, Optional[str]]
     """
     Genera el guion meteorológico a partir del prompt dado.
-    Ejecuta la cascada completa: Gemini principal → Gemini respaldo → Groq.
+    Ejecuta la cascada completa:
+        Gemini principal → Gemini respaldo → Gemini extra (si configurado) → Groq.
+
+    El paso 'Gemini extra' se activa solo si MODELO_GEMINI_EXTRA está definido
+    y no vacío en config.py. De lo contrario se salta sin afectar el resto.
 
     Retorna (texto_guion, modelo_usado, mensaje_error).
     En éxito: (str, str, None).
     En fallo total: (None, str, str).
     """
-    return _generar_gemini(prompt)
+    return _generar_gemini(prompt, nivel=0)

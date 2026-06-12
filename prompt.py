@@ -1,11 +1,17 @@
-# rev 16.9.0
-# rev anterior: rev 16.8.0
+# rev 17.1.0
+# rev anterior: rev 17.0.0
 # Changelog:
-#   16.9.0 — _bloque_lunar() ampliado con tres líneas nuevas provenientes de USNO:
-#            crepúsculo civil (inicio y fin), mediodía solar y fase lunar más cercana.
-#            La fase cercana es condicional: solo se incluye si fase_cercana_dias
-#            está en el rango [-1, 3] (de ayer a 3 días adelante). Fuera de ese rango
-#            se omite para no saturar el guion con datos sin relevancia inmediata.
+#   17.1.0 — Se optimiza el formato de fecha: ahora se genera en Python como una cadena
+#            natural en español (incluyendo día de la semana) para el prompt.
+#   17.0.0 — _bloque_owm(): se añade la dirección cardinal del viento (wind_dir_cardinal)
+#            proveniente de OWM al final de la línea de viento actual, si está disponible.
+#            _bloque_forecast(): se añade línea de punto de rocío cuando
+#            dew_point_relevante es True (horario nocturno y pre/post-amanecer);
+#            se añade línea de saturación crítica cuando dew_point_critico es True
+#            (spread temp−rocío ≤2°C, cualquier hora).
+#            Regla 11 actualizada: separación explícita de FUENTE 1 (ráfagas proyectadas
+#            del día) y FUENTE 2 (velocidad y dirección actual en tiempo real).
+#            Regla 17 ampliada con el caso de saturación crítica (dew_point_critico).
 #   16.8.0 — Se permite la inclusión del bloque lunar de día si la luna es visible
 #            (visible_de_dia). Se expande _bloque_lunar() con transit_time y la bandera
 #            visible_de_dia. Se rediseña la Regla 16.
@@ -43,6 +49,7 @@
 #   16.0.0 — FUENTE 5 (CONAGUA method=3), weather_id alerts, modo_nocturno.
 #   15.1.0 — Bloque OWM extendido.
 
+import datetime
 import time
 from typing import Optional
 
@@ -163,6 +170,14 @@ def _bloque_owm(owm):
         else ""
     )
 
+    # Dirección cardinal: añadir solo si está disponible. La traducción ya viene
+    # hecha en Python (“del noreste”, “del sur”, etc.) para evitar alucinaciones.
+    linea_dir = (
+        ", proveniente {0}".format(owm["wind_dir_cardinal"])
+        if owm.get("wind_dir_cardinal")
+        else ""
+    )
+
     # Línea de presión: "1012 hPa | etiqueta" si hay valor numérico, solo etiqueta si no.
     if owm.get("pressure") is not None:
         linea_presion = "- Presión atmosférica: {0} hPa | {1}".format(
@@ -178,7 +193,7 @@ def _bloque_owm(owm):
         "- Humedad: {2}% | Condición: {3}\n"
         "- Nubosidad actual: {4}%\n"
         "- Visibilidad: {5} km | Lluvia registrada en la última hora: {6} mm\n"
-        "- Viento actual: {7} km/h{8}\n"
+        "- Viento actual: {7} km/h{8}{dir}\n"
         "{presion}\n"
         "- Hora de amanecer: {9} | Hora de atardecer: {10}"
     ).format(
@@ -190,6 +205,7 @@ def _bloque_owm(owm):
         owm["amanecer"], owm["atardecer"],
         alerta=linea_alerta,
         presion=linea_presion,
+        dir=linea_dir,
     )
 
 
@@ -293,9 +309,26 @@ def _bloque_forecast(fc):
         "riesgo_helada":   "RIESGO DE HELADA: La isoterma de 0°C está muy próxima a la altitud de Huichapan. Posible formación de escarcha en zonas altas y cultivos.",
         "isoterma_cercana": "WATCH DE HELADA: La temperatura de congelación se aproxima. Monitorear condiciones en zonas elevadas.",
     }
-    helada = fc.get("helada_etiqueta")
-    if helada and helada in _HELADA_MSG:
-        lineas.append("- {0}".format(_HELADA_MSG[helada]))
+    if fc.get("helada_etiqueta") and fc["helada_etiqueta"] in _HELADA_MSG:
+        lineas.append("- {0}".format(_HELADA_MSG[fc["helada_etiqueta"]]))
+
+    # Punto de rocío: solo cuando la bandera dew_point_relevante es True
+    # (horario nocturno o pre/post-amanecer temprano, 20:00-09:59).
+    # Se presenta como dato de referencia técnica para que la IA lo interprete
+    # en términos de riesgo de niebla o escarcha, sin mencionar el término científico.
+    if fc.get("dew_point_relevante") and fc.get("dew_point") is not None:
+        lineas.append(
+            "- Punto de rocío (referencia técnica nocturna): {0}°C".format(fc["dew_point"])
+        )
+
+    # Saturación crítica: spread temp−rocío ≤2°C detectado a CUALQUIER hora.
+    # Se inyecta con su propia etiqueta para que la Regla 17 la identifique y priorice.
+    # Solo se añade si no está ya cubierta por dew_point_relevante (evitar duplicado).
+    if fc.get("dew_point_critico") and fc.get("dew_point") is not None:
+        if not fc.get("dew_point_relevante"):   # nocturno ya la expone; evitar repetir
+            lineas.append(
+                "- Punto de rocío (referencia técnica — saturación crítica): {0}°C".format(fc["dew_point"])
+            )
 
     cuerpo = "\n".join(lineas)
     return "FUENTE 4 (Open-Meteo Pronóstico a corto plazo - próximas 6 horas):\n{0}{1}".format(cuerpo, refs_str)
@@ -466,7 +499,22 @@ def construir_prompt(cna, owm, aqi, forecast=None, contexto_sismo=None,
 
     Retorna el texto del prompt listo para enviar a Gemini/Groq.
     """
-    fecha_exacta = time.strftime("%Y-%m-%d")
+    # Fecha en formato natural en español, pre-computada en Python para evitar que el
+    # modelo infiera el día de la semana y cometa errores en fechas lejanas a su corte.
+    _DIAS_ES   = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"]
+    _MESES_ES  = [
+        "enero", "febrero", "marzo", "abril", "mayo", "junio",
+        "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre",
+    ]
+    _ahora      = datetime.datetime.now()
+    _dia_semana = _DIAS_ES[_ahora.weekday()]
+    _mes        = _MESES_ES[_ahora.month - 1]
+    fecha_exacta = "{dia_sem} {dia} de {mes} de {anio}".format(
+        dia_sem=_dia_semana,
+        dia=_ahora.day,
+        mes=_mes,
+        anio=_ahora.year,
+    )
     hora_exacta  = time.strftime("%H:%M")
 
     bloque_cna   = _bloque_conagua(cna, modo_nocturno=modo_nocturno)
@@ -496,7 +544,7 @@ def construir_prompt(cna, owm, aqi, forecast=None, contexto_sismo=None,
         "REGLAS PARA LA REDACCIÓN (CRÍTICAS):\n"
         "1. Inicia con un saludo formal simple según la hora del día (buenos dias/tardes/noches).\n"
         "{regla_lluvia}\n"
-        "3. Menciona la sensación térmica junto a la temperatura actual para darle más valor al reporte. Además Da interpretación del clima actual. \n"
+        "3. Menciona la sensación térmica junto a la temperatura actual para darle más valor al reporte. Además Da interpretación del clima actual (Ejemplo: Noche muy fría, día caluroso, día/noche lluvioso, etc). \n"
         "4. Menciona la visibilidad solo si crees que es un dato relevante en este momento "
         "(niebla, lluvia, o si es menor a 10km. NO mencionar si es de 10km ya que es el rango máximo).\n"
         "5. Menciona la hora del amanecer o atardecer si la hora actual de este reporte ({hora}) "
@@ -528,10 +576,17 @@ def construir_prompt(cna, owm, aqi, forecast=None, contexto_sismo=None,
         "Si la etiqueta contrasta con la condición actual "
         "(por ejemplo, presión alta pero lluvia activa), señálalo de forma breve e informativa. "
         "Si no hay contraste interesante o la presión es normal sin anomalías, omítela por completo.\n"
-        "11. Viento: menciona el viento actual de la FUENTE 2 como el estado en este momento, "
-        "incluyendo ráfagas si las hay. Si la FUENTE 4 indica que el viento se intensificará "
-        "más de 8 km/h en las próximas horas, añade una oración de tendencia. "
-        "Si no hay cambio significativo proyectado, no lo menciones.\n"
+        "11. Viento: combina ambas fuentes para dar un cuadro completo sin redundar.\n"
+        "  • Velocidad y dirección en este momento: usa FUENTE 2. Menciona la velocidad y"
+        " la dirección cardinal ('del noreste', 'del sur', etc.). Usa la dirección para"
+        " enriquecer el contexto (ej. vientos del norte indican masa de aire frío;"
+        " del este/noreste pueden traer humedad del Golfo).\n"
+        "  • Ráfagas proyectadas del día: usa FUENTE 1 (CONAGUA). Si las ráfagas del día"
+        " son notablemente superiores al viento actual de la FUENTE 2, menciona que se"
+        " esperan ráfagas de hasta X km/h durante el día.\n"
+        "  • Tendencia a corto plazo: si la FUENTE 4 indica que el viento se intensificará"
+        " más de 8 km/h en las próximas horas, añade una oración de tendencia."
+        " Si no hay cambio significativo proyectado, no lo menciones.\n"
         "12. Pronóstico de lluvia a corto plazo (FUENTE 4): inclúyelo ÚNICAMENTE si "
         "la FUENTE 4 contiene datos de probabilidad de lluvia (probabilidad > 20% en la ventana). "
         "Si la FUENTE 4 indica [SIN EVENTOS RELEVANTES], no menciones lluvia proyectada. "
@@ -591,6 +646,26 @@ def construir_prompt(cna, owm, aqi, forecast=None, contexto_sismo=None,
         "menciónala de forma breve y natural al final del bloque lunar. "
         "Usa el lenguaje de proximidad (hoy, mañana, pasado mañana, ayer) que ya indica la fuente. "
         "No la menciones si la línea no está presente en la FUENTE 5.\n\n"
+
+        "17. Punto de rocío (FUENTE 4): si la FUENTE 4 contiene una línea de punto de rocío,"
+        " úsala para enriquecer el reporte con una advertencia práctica."
+        " No menciones el término técnico 'punto de rocío' (salvo que sea realmente necesario) "
+        "ni su valor numérico en grados: tradúcelo siempre a lenguaje accesible.\n"
+        "   CASO A — Saturación crítica (línea dice 'saturación crítica'):"
+        " PRIORIDAD MÁXIMA, válido a cualquier hora. El aire está prácticamente saturado."
+        " Avisa que existe riesgo inminente de formación de niebla o neblina, especialmente"
+        " en carreteras, barrancas y zonas bajas. Recomienda precauciones."
+        " Incorpóralo antes del párrafo de condiciones generales si es relevante para la hora.\n"
+        "   CASO B — Referencia nocturna (línea dice 'referencia técnica nocturna'):\n"
+        "     b1) Si el valor implica una diferencia pequeña respecto a la temperatura actual"
+        " (≤2°C según FUENTE 2): avisa sobre formación probable de niebla nocturna o neblina"
+        " en carreteras y zonas bajas. Recomienda precaución al conducir en la madrugada.\n"
+        "     b2) Si el valor de la línea es menor a 0°C: advierte sobre riesgo de escarcha"
+        " en cultivos, superficies y carreteras. Intégralo al bloque de helada si ya existe.\n"
+        "     b3) En cualquier otro caso nocturno: mención breve de humedad ambiental elevada"
+        " (ej. 'la humedad nocturna se mantendrá alta').\n"
+        "   Si la FUENTE 4 no contiene ninguna línea de punto de rocío,"
+        " NO menciones rocio, humedad nocturna ni valores numéricos de saturación.\n\n"
 
         "Al inicio de la redacción, antes del saludo, coloca exactamente la siguiente "
         "cortinilla institucional:\n"

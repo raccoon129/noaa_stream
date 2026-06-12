@@ -1,5 +1,17 @@
-# rev 16.8.0
-# rev anterior: rev 16.7.0
+# rev 17.0.0
+# rev anterior: rev 16.8.0
+# Changelog:
+#   17.0.0 — OWM: se añade wind_dir_cardinal (traducción de wind_deg en grados a punto
+#            cardinal en español, ej. "del noreste"). La traducción se hace en Python
+#            antes del prompt para evitar alucinaciones del modelo.
+#            Forecast: se añade dew_point_relevante (bool) — True únicamente cuando la
+#            hora actual cae en horario nocturno, pre-amanecer o post-amanecer temprano
+#            (entre las 20:00 y las 09:00). Controla la inclusión del punto de rocío
+#            en la locución para los tramos donde su valor tiene impacto civil real
+#            (niebla nocturna, escarcha, bancos de niebla en carreteras al amanecer).
+#            Forecast (recolectar): se añade dew_point_critico (bool) — True a
+#            CUALQUIER hora cuando temp_owm − dew_point ≤ 2°C (saturación crítica
+#            del aire con riesgo inminente de niebla o neblina).
 # Changelog:
 #   16.8.0 — obtener_fase_lunar() amplía la extracción de la respuesta USNO con:
 #            crepusculo_inicio/fin (sundata "Begin/End Civil Twilight"),
@@ -351,6 +363,38 @@ def obtener_forecast_horario():
 
 
 # ==========================================
+#   TRADUCCIÓN DE DIRECCIÓN DE VIENTO
+# ==========================================
+
+_CARDINALES = [
+    (  0.0,  22.5, "del norte"),
+    ( 22.5,  67.5, "del noreste"),
+    ( 67.5, 112.5, "del este"),
+    (112.5, 157.5, "del sureste"),
+    (157.5, 202.5, "del sur"),
+    (202.5, 247.5, "del suroeste"),
+    (247.5, 292.5, "del oeste"),
+    (292.5, 337.5, "del noroeste"),
+    (337.5, 360.0, "del norte"),
+]
+
+
+def _grados_a_cardinal(deg):
+    """Convierte wind_deg (0-360) a un texto cardinal en español.
+    Retorna None si el valor no es un número válido."""
+    if deg is None:
+        return None
+    try:
+        deg = float(deg) % 360
+    except (TypeError, ValueError):
+        return None
+    for lo, hi, label in _CARDINALES:
+        if lo <= deg < hi:
+            return label
+    return "del norte"  # 360 exacto
+
+
+# ==========================================
 #   EXTRACCIÓN DE CAMPOS OWM
 # ==========================================
 
@@ -382,6 +426,7 @@ def _extraer_owm(datos_owm):
     Normaliza los campos relevantes de la respuesta cruda de OWM.
     v16: añade grnd_level, wind_deg, sunrise_ts/sunset_ts (unix) y
          weather_id_etiqueta (etiqueta de alerta de fenómeno severo).
+    v17: añade wind_dir_cardinal (punto cardinal en español derivado de wind_deg).
     """
     temp        = datos_owm["main"].get("temp")
     feels       = datos_owm["main"].get("feels_like")
@@ -393,11 +438,12 @@ def _extraer_owm(datos_owm):
     weather_id  = datos_owm["weather"][0].get("id")
 
     # Viento: OWM entrega m/s, se convierte a km/h
-    wind_speed_ms  = datos_owm.get("wind", {}).get("speed", 0)
-    wind_gust_ms   = datos_owm.get("wind", {}).get("gust")
-    wind_deg       = datos_owm.get("wind", {}).get("deg")  # dirección en grados
-    wind_speed_kmh = round(wind_speed_ms * 3.6, 1)
-    wind_gust_kmh  = round(wind_gust_ms * 3.6, 1) if wind_gust_ms is not None else None
+    wind_speed_ms   = datos_owm.get("wind", {}).get("speed", 0)
+    wind_gust_ms    = datos_owm.get("wind", {}).get("gust")
+    wind_deg        = datos_owm.get("wind", {}).get("deg")  # dirección en grados
+    wind_speed_kmh  = round(wind_speed_ms * 3.6, 1)
+    wind_gust_kmh   = round(wind_gust_ms * 3.6, 1) if wind_gust_ms is not None else None
+    wind_dir_cardinal = _grados_a_cardinal(wind_deg)   # punto cardinal en español
 
     # Nubosidad actual en porcentaje
     clouds_all = datos_owm.get("clouds", {}).get("all")
@@ -432,6 +478,7 @@ def _extraer_owm(datos_owm):
         "wind_speed_kmh":    wind_speed_kmh,
         "wind_gust_kmh":     wind_gust_kmh,
         "wind_deg":          wind_deg,
+        "wind_dir_cardinal": wind_dir_cardinal,
         "clouds_all":        clouds_all,
         "weather_id":        weather_id,
         "weather_id_etiqueta": _etiqueta_weather_id(weather_id),
@@ -521,6 +568,11 @@ def _etiqueta_helada(freezing_level_m, altitud_estacion_m=None):
     if margen <= 700:
         return "isoterma_cercana"     # watch, sin alerta inmediata
     return None
+
+
+# Ventana horaria en que el punto de rocío es civil y narrativamente relevante:
+# noche, pre-amanecer y primera hora post-amanecer.
+_HORAS_ROCIO_RELEVANTE = set(range(20, 24)) | set(range(0, 10))  # 20:00-09:59
 
 
 def _extraer_forecast(datos_fc, hora_actual):
@@ -650,6 +702,12 @@ def _extraer_forecast(datos_fc, hora_actual):
     # --- Punto de rocío (promedio de la ventana) ---
     dew_point = round(sum(ventana_dewpts) / len(ventana_dewpts), 1) if ventana_dewpts else None
 
+    # --- Relevancia del punto de rocío para locución ---
+    # Solo se inyecta al prompt en horario nocturno, pre-amanecer y post-amanecer temprano
+    # (entre las 20:00 y las 09:59), que es cuando tiene mayor impacto civil:
+    # formación de niebla, escarcha en carreteras y cultivos, bancos de niebla.
+    dew_point_relevante = (hora_actual in _HORAS_ROCIO_RELEVANTE) and (dew_point is not None)
+
     # --- Isoterma de congelación (valor mínimo = más cercano a la superficie) ---
     freezing_level_m = min(ventana_freezing) if ventana_freezing else None
     helada_etiqueta  = _etiqueta_helada(freezing_level_m)
@@ -663,13 +721,14 @@ def _extraer_forecast(datos_fc, hora_actual):
         "hora_viento_max":  hora_viento,
         "cape_max":         cape_max,
         "hora_cape_max":    hora_cape,
-        "cape_etiqueta":    cape_etiqueta,
-        "lluvia_relevante": lluvia_relevante,
-        "viento_relevante": viento_relevante,
-        "cape_relevante":   cape_relevante,
-        "dew_point":        dew_point,
-        "freezing_level_m": freezing_level_m,
-        "helada_etiqueta":  helada_etiqueta,
+        "cape_etiqueta":      cape_etiqueta,
+        "lluvia_relevante":   lluvia_relevante,
+        "viento_relevante":   viento_relevante,
+        "cape_relevante":     cape_relevante,
+        "dew_point":          dew_point,
+        "dew_point_relevante": dew_point_relevante,
+        "freezing_level_m":   freezing_level_m,
+        "helada_etiqueta":    helada_etiqueta,
     }
 
 
@@ -684,13 +743,15 @@ def _forecast_vacio():
         "hora_viento_max":  0,
         "cape_max":         0,
         "hora_cape_max":    0,
-        "cape_etiqueta":    None,
-        "lluvia_relevante": False,
-        "viento_relevante": False,
-        "cape_relevante":   False,
-        "dew_point":        None,
-        "freezing_level_m": None,
-        "helada_etiqueta":  None,
+        "cape_etiqueta":      None,
+        "lluvia_relevante":   False,
+        "viento_relevante":   False,
+        "cape_relevante":     False,
+        "dew_point":          None,
+        "dew_point_relevante": False,
+        "dew_point_critico":  False,
+        "freezing_level_m":   None,
+        "helada_etiqueta":    None,
     }
 
 
@@ -820,6 +881,17 @@ def recolectar(conexion_auditoria):
         disponible_fc = False
         print(f"[SISTEMA] - {estado.ts()} ⚠️  Open-Meteo Forecast no disponible. Se omitirá del guion actual.")
         bd.registrar_error_bd(conexion_auditoria, "OPEN_METEO_FC", error_fc or "Sin respuesta.")
+
+    # --- Flag de saturación crítica (spread temp − rocío ≤ 2°C) ---
+    # Se calcula aquí porque requiere datos de dos fuentes distintas:
+    # la temperatura en tiempo real de OWM y el punto de rocío del forecast.
+    # Si cualquiera de los dos no está disponible, la flag queda en False.
+    dew = forecast.get("dew_point")
+    temp_owm = owm.get("temp") if owm else None
+    if dew is not None and temp_owm is not None:
+        forecast["dew_point_critico"] = (temp_owm - dew) <= 2.0
+    else:
+        forecast["dew_point_critico"] = False
 
     # --- Fase lunar (USNO) ---
     if datos_lunar:
