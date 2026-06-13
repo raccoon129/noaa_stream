@@ -57,3 +57,7 @@ timestamp_sismo: float = 0
 # True si el evento activo es un simulacro (flujo simplificado: solo alarma)
 sismo_es_simulacro: bool = False
 
+# ID de la fila en condiciones_especiales del evento actual.
+# Se asigna justo después del INSERT inicial para que enriquecer_con_apis()
+# use siempre el ID correcto (evita race condition con _obtener_ultimo_id_evento).
+ultimo_id_sismo_bd: int = None

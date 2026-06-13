@@ -21,6 +21,42 @@ import estado
 from sismo_regex import (REGEX_ALERTA, REGEX_EFECTOS, REGEX_DETECTADO,
                           REGEX_SSN, REGEX_SIMULACRO, REGEX_CIUDAD,
                           ESCALA_INTENSIDAD)
+
+# Tabla de abreviaturas SSN → nombre completo del estado
+_ESTADOS_MX = {
+    "AGS": "Aguascalientes",
+    "BC":  "Baja California",
+    "BCS": "Baja California Sur",
+    "CAM": "Campeche",
+    "CHIS": "Chiapas",
+    "CHIH": "Chihuahua",
+    "COAH": "Coahuila",
+    "COL": "Colima",
+    "CDMX": "Ciudad de México",
+    "DGO": "Durango",
+    "GTO": "Guanajuato",
+    "GRO": "Guerrero",
+    "HGO": "Hidalgo",
+    "JAL": "Jalisco",
+    "MEX": "Estado de México",
+    "MICH": "Michoacán",
+    "MOR": "Morelos",
+    "NAY": "Nayarit",
+    "NL":  "Nuevo León",
+    "OAX": "Oaxaca",
+    "PUE": "Puebla",
+    "QRO": "Querétaro",
+    "QROO": "Quintana Roo",
+    "SLP": "San Luis Potosí",
+    "SIN": "Sinaloa",
+    "SON": "Sonora",
+    "TAB": "Tabasco",
+    "TAMS": "Tamaulipas",
+    "TLAX": "Tlaxcala",
+    "VER": "Veracruz",
+    "YUC": "Yucatán",
+    "ZAC": "Zacatecas",
+}
 from sismo_flujo import flujo_alerta_sismica
 
 # Re-exportar para que noaa_str.py pueda hacer sismo.enriquecer_con_apis()
@@ -127,7 +163,9 @@ def _extraer_datos(texto, datos_dict):
     if m_ssn:
         mag, loc, edo, fecha, hora, lat, lon, pf = m_ssn.groups()
         datos_dict["ssn_magnitud"] = float(mag)
-        datos_dict["ssn_ubicacion"] = f"{loc}, {edo}"
+        # Expandir abreviatura del estado a nombre completo
+        edo_completo = _ESTADOS_MX.get(edo.upper().strip(), edo)
+        datos_dict["ssn_ubicacion"] = f"{loc}, {edo_completo}"
         if "epicentro" not in datos_dict:
             datos_dict["epicentro"] = datos_dict["ssn_ubicacion"]
         datos_dict["ssn_latitud"] = float(lat)

@@ -223,7 +223,9 @@ def actualizar_audio_clima():
                     if estado.ciclos_sismo_restantes <= 0:
                         estado.sismo_activo = False
                         estado.datos_sismo = None
+                        estado.ultimo_id_sismo_bd = None
                         print(f"[SISTEMA] - {estado.ts()} ✅ Evento sísmico finalizado. Volviendo a modo normal.")
+
                     else:
                         print(f"[SISTEMA] - {estado.ts()} ℹ️ Ciclos de enriquecimiento restantes: {estado.ciclos_sismo_restantes}")
         else:
@@ -289,14 +291,14 @@ def preguntar_arranque_inicial() -> bool:
 
     print("")
     print("┌─────────────────────────────────────────────────────┐")
-    print("│          NOAA HUICHAPAN — ARRANQUE INTERACTIVO      │")
+    print("│          NOAA STREAM — ARRANQUE INTERACTIVO         │")
     print("├─────────────────────────────────────────────────────┤")
-    print(f"│  Hora actual        : {hhmm_actual}                              │")
-    print(f"│  Próximo horario    : {proximo_str}             │")
-    print(f"│  Tiempo de espera   : {espera_mins}m {espera_segs:02d}s                         │")
+    print(f"│  Hora actual        : {hhmm_actual}                │")
+    print(f"│  Próximo horario    : {proximo_str}                │")
+    print(f"│  Tiempo de espera   : {espera_mins}m {espera_segs:02d}s       ")
     print("├─────────────────────────────────────────────────────┤")
     print("│  [1] Ejecutar reporte ahora                         │")
-    print(f"│  [2] Esperar al próximo horario ({proximo_str}) │")
+    print(f"│  [2] Esperar al próximo horario ({proximo_str})    │")
     print("└─────────────────────────────────────────────────────┘")
 
     while True:

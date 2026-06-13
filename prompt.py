@@ -433,46 +433,73 @@ def _regla_lluvia(owm, cna):
 def _bloque_sismo(contexto_sismo: Optional[dict]) -> str:
     """
     Genera el bloque de contexto sísmico para inyectarlo en el reporte del clima.
-    Incluye datos enriquecidos de USGS/EMSC/IRIS si están disponibles.
+    Incluye datos enriquecidos de USGS/EMSC/IRIS y profundidad si están disponibles.
     """
     if not contexto_sismo:
         return ""
 
-    magnitud = contexto_sismo.get("ssn_magnitud")
+    magnitud  = contexto_sismo.get("ssn_magnitud")
     epicentro = contexto_sismo.get("epicentro", "territorio mexicano")
+    prof      = contexto_sismo.get("ssn_profundidad_km")
 
     if magnitud:
         mag_str = f"magnitud preliminar {magnitud}"
     else:
         mag_str = "intensidad detectada"
 
-    # Datos enriquecidos de APIs internacionales
+    prof_str = f" a una profundidad de {prof} km" if prof is not None else ""
+
+    # Datos enriquecidos de APIs internacionales — con descripción de la fuente para contexto del modelo
     extras = []
     if contexto_sismo.get("usgs_magnitud"):
-        extras.append(f"USGS reporta magnitud {contexto_sismo['usgs_magnitud']}")
+        extras.append(
+            f"USGS (Servicio Geológico de los Estados Unidos, principal agencia geofísica de referencia mundial) "
+            f"reporta magnitud {contexto_sismo['usgs_magnitud']}"
+        )
     if contexto_sismo.get("emsc_magnitud"):
-        extras.append(f"EMSC reporta magnitud {contexto_sismo['emsc_magnitud']}")
+        extras.append(
+            f"EMSC (Centro Sismológico Euro-Mediterráneo, red de monitoreo sismológico en tiempo real de Europa) "
+            f"reporta magnitud {contexto_sismo['emsc_magnitud']}"
+        )
+    if contexto_sismo.get("gfz_magnitud"):
+        extras.append(
+            f"GFZ Potsdam (Centro Alemán de Investigación en Geociencias, observatorio sismológico global de Alemania) "
+            f"reporta magnitud {contexto_sismo['gfz_magnitud']}"
+        )
     if contexto_sismo.get("usgs_tsunami") == 1:
-        extras.append("USGS ha emitido alerta de tsunami")
+        extras.append("USGS (Servicio Geológico de los Estados Unidos) ha emitido alerta de tsunami")
     if contexto_sismo.get("replicas_detectadas"):
-        extras.append(f"Se han detectado {contexto_sismo['replicas_detectadas']} réplicas")
+        extras.append(
+            f"El SSN (Servicio Sismológico Nacional de México) ha registrado "
+            f"{contexto_sismo['replicas_detectadas']} réplicas posteriores al evento principal"
+        )
 
-    extras_str = ""
     if extras:
         extras_str = (
-            "\nDatos internacionales disponibles: " + ". ".join(extras) + ".\n"
-            "Incluye estos datos en tu mención del sismo de forma natural y accesible.\n"
+            "\nConfirmación de agencias sismológicas internacionales (secundarias):\n- "
+            + "\n- ".join(extras) + "\n"
+            "Incluye estos datos en la mención del sismo de forma natural y accesible, "
+            "mencionando de qué agencia proviene cada dato. "
+            "El dato prioritario y oficial es siempre el del SSN; las demás agencias son confirmaciones internacionales.\n"
+
+        )
+        nota_actualizacion = ""
+    else:
+        extras_str = ""
+        nota_actualizacion = (
+            "Añade que 'El reporte detallado con información de agencias sismológicas "
+            "internacionales estará disponible en la próxima actualización'. "
         )
 
     return (
         f"CONTEXTO SÍSMICO RECIENTE (CRÍTICO - INYECTAR AL INICIO DEL REPORTE, DESPUÉS DE LA HORA Y FECHA):\n"
-        f"Ha ocurrido un sismo recientemente de {mag_str} con epicentro en {epicentro}.\n"
+        f"Fuente primaria: SSN (Servicio Sismológico Nacional de México — autoridad oficial mexicana en sismología).\n"
+        f"Ha ocurrido un sismo recientemente de {mag_str} con epicentro en {epicentro}{prof_str}.\n"
         f"{extras_str}"
         "Regla especial: Inicia el reporte meteorológico informando brevemente sobre este evento. "
-        "Genera un párrafo introfuctorio sobre el evento y posteriormente la explicación con los datos:"
-        f"{mag_str} fue registrado recientemente con epicentro en {epicentro}...'. "
-        "Añade que 'El reporte detallado con información de agencias sismológicas internacionales "
-        "estará disponible en la próxima actualización'. "
+        "Genera un párrafo introductorio sobre el evento y posteriormente la explicación precisa con los datos conjunto a una interpretación objetiva: "
+        f"'{mag_str} fue registrado recientemente con epicentro en {epicentro}{prof_str}...'. "
+        f"{nota_actualizacion}"
         "Tras esta breve mención, continúa fluidamente con el reporte del clima habitual.\n"
     )
 
