@@ -433,7 +433,8 @@ def _regla_lluvia(owm, cna):
 def _bloque_sismo(contexto_sismo: Optional[dict]) -> str:
     """
     Genera el bloque de contexto sísmico para inyectarlo en el reporte del clima.
-    Incluye datos enriquecidos de USGS/EMSC/IRIS y profundidad si están disponibles.
+    Incluye TODOS los datos del evento: magnitud, epicentro, profundidad, hora,
+    intensidades locales (SASSLA) y confirmaciones de agencias internacionales.
     """
     if not contexto_sismo:
         return ""
@@ -441,6 +442,7 @@ def _bloque_sismo(contexto_sismo: Optional[dict]) -> str:
     magnitud  = contexto_sismo.get("ssn_magnitud")
     epicentro = contexto_sismo.get("epicentro", "territorio mexicano")
     prof      = contexto_sismo.get("ssn_profundidad_km")
+    hora_ev   = contexto_sismo.get("hora_evento_sassla")
 
     if magnitud:
         mag_str = f"magnitud preliminar {magnitud}"
@@ -448,6 +450,41 @@ def _bloque_sismo(contexto_sismo: Optional[dict]) -> str:
         mag_str = "intensidad detectada"
 
     prof_str = f" a una profundidad de {prof} km" if prof is not None else ""
+    hora_str = f" ocurrido aproximadamente a las {hora_ev.split(' ')[1][:5]} hora local" if hora_ev else ""
+
+    # Intensidades de SASSLA: solo relevantes cuando aún no hay confirmación internacional.
+    # Una vez que EMSC/GFZ/USGS confirman el evento, son datos desfasados.
+    hay_confirmacion_internacional = any([
+        contexto_sismo.get("usgs_magnitud"),
+        contexto_sismo.get("emsc_magnitud"),
+        contexto_sismo.get("gfz_magnitud"),
+    ])
+    intensidades_str = ""
+    if not hay_confirmacion_internacional:
+        sassla_dict = contexto_sismo.get("intensidades_sassla", {})
+        if sassla_dict:
+            from sismo_regex import CIUDADES_SASSLA
+            lineas_int = []
+            for ciudad_abr, nivel in sassla_dict.items():
+                nombre = CIUDADES_SASSLA.get(ciudad_abr, ciudad_abr)
+                lineas_int.append(f"{nombre}: {nivel}")
+            intensidades_str = (
+                "Intensidades preliminares por región registradas por SASSLA (cortesía) "
+                "(información del disparador de alerta, aún sin confirmación internacional):\n  "
+                + "\n  ".join(lineas_int) + "\n"
+            )
+        else:
+            # Retrocompatibilidad con campos planos
+            lineas_int = []
+            if contexto_sismo.get("intensidad_cdmx"):
+                lineas_int.append(f"Ciudad de México: {contexto_sismo['intensidad_cdmx']}")
+            if contexto_sismo.get("intensidad_tol"):
+                lineas_int.append(f"Toluca: {contexto_sismo['intensidad_tol']}")
+            if lineas_int:
+                intensidades_str = (
+                    "Intensidades registradas por SASSLA: "
+                    + ", ".join(lineas_int) + ".\n"
+                )
 
     # Datos enriquecidos de APIs internacionales — con descripción de la fuente para contexto del modelo
     extras = []
@@ -494,11 +531,12 @@ def _bloque_sismo(contexto_sismo: Optional[dict]) -> str:
     return (
         f"CONTEXTO SÍSMICO RECIENTE (CRÍTICO - INYECTAR AL INICIO DEL REPORTE, DESPUÉS DE LA HORA Y FECHA):\n"
         f"Fuente primaria: SSN (Servicio Sismológico Nacional de México — autoridad oficial mexicana en sismología).\n"
-        f"Ha ocurrido un sismo recientemente de {mag_str} con epicentro en {epicentro}{prof_str}.\n"
+        f"Ha ocurrido un sismo{hora_str} de {mag_str} con epicentro en {epicentro}{prof_str}.\n"
+        f"{intensidades_str}"
         f"{extras_str}"
         "Regla especial: Inicia el reporte meteorológico informando brevemente sobre este evento. "
         "Genera un párrafo introductorio sobre el evento y posteriormente la explicación precisa con los datos conjunto a una interpretación objetiva: "
-        f"'{mag_str} fue registrado recientemente con epicentro en {epicentro}{prof_str}...'. "
+        f"'{mag_str} fue registrado{hora_str} con epicentro en {epicentro}{prof_str}...'. "
         f"{nota_actualizacion}"
         "Tras esta breve mención, continúa fluidamente con el reporte del clima habitual.\n"
     )

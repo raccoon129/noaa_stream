@@ -2,6 +2,7 @@
 
 import time
 import config
+from sismo_regex import CIUDADES_SASSLA
 
 
 def construir_prompt_sismo_inmediato(datos):
@@ -16,10 +17,25 @@ def construir_prompt_sismo_inmediato(datos):
         contexto.append(f"Magnitud preliminar (SSN/SASSLA): {datos['ssn_magnitud']}")
     if datos.get("ssn_profundidad_km") is not None:
         contexto.append(f"Profundidad del foco: {datos['ssn_profundidad_km']} km")
-    if datos.get("intensidad_cdmx"):
-        contexto.append(f"Intensidad en CDMX: {datos['intensidad_cdmx']}")
-    if datos.get("intensidad_tol"):
-        contexto.append(f"Intensidad en Toluca: {datos['intensidad_tol']}")
+
+    # Intensidades por ciudad (dict completo de SASSLA — todas las regiones reportadas)
+    intensidades = datos.get("intensidades_sassla", {})
+    if intensidades:
+        lineas_int = []
+        for ciudad_abr, nivel in intensidades.items():
+            nombre = CIUDADES_SASSLA.get(ciudad_abr, ciudad_abr)
+            lineas_int.append(f"{nombre}: {nivel}")
+        contexto.append(
+            "Intensidades registradas por SASSLA:\n  " + "\n  ".join(lineas_int)
+        )
+    else:
+        # Retrocompatibilidad si solo vienen los campos planos
+        if datos.get("intensidad_cdmx"):
+            contexto.append(f"Intensidad en Ciudad de México: {datos['intensidad_cdmx']}")
+        if datos.get("intensidad_tol"):
+            contexto.append(f"Intensidad en Toluca: {datos['intensidad_tol']}")
+
+
 
 
     # Datos de APIs internacionales (si ya los tenemos) — con descripción de la fuente
@@ -67,6 +83,6 @@ def construir_prompt_sismo_inmediato(datos):
         "4. Da recomendaciones básicas de seguridad.\n"
         "5. Indica que la información detallada estará disponible en la próxima actualización.\n"
         "6. Cierra con la frase exacta: 'Este es un reporte especial de alerta sísmica reciente.'\n"
-        "7. Expresa los números y horas en letra para locución."
+        "7. Expresa los números y horas en letra para locución, sin markdown ni emojis, solo texto plano."
     )
 

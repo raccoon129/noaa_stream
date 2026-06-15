@@ -18,9 +18,11 @@ from telethon import TelegramClient, events
 
 import config
 import estado
-from sismo_regex import (REGEX_ALERTA, REGEX_EFECTOS, REGEX_DETECTADO,
-                          REGEX_SSN, REGEX_SIMULACRO, REGEX_CIUDAD,
-                          ESCALA_INTENSIDAD)
+from sismo_regex import (REGEX_ALERTA, REGEX_EFECTOS, REGEX_DETECTADO, REGEX_TIEMPOS,
+                          REGEX_SSN, REGEX_SSN_SASSLA, REGEX_SIMULACRO, REGEX_CIUDAD,
+                          REGEX_RESUMEN, REGEX_RESUMEN_CDMX,
+                          ESCALA_INTENSIDAD, CIUDADES_SASSLA)
+
 
 # Tabla de abreviaturas SSN → nombre completo del estado
 _ESTADOS_MX = {
@@ -123,7 +125,10 @@ def _evaluar_simulacro(texto):
 
 
 def _evaluar_activacion(texto_efectos):
-    """Determina si el sismo es perceptible en CDMX o TOL."""
+    """
+    Determina si el sismo es perceptible en CDMX o TOL (nivel > IMPERCEPTIBLE).
+    Usada antes de activar la alerta para filtrar sismos imperceptibles localmente.
+    """
     cdmx_nivel = 0
     tol_nivel = 0
 
@@ -141,36 +146,98 @@ def _evaluar_activacion(texto_efectos):
 
 
 def _extraer_datos(texto, datos_dict):
-    """Extrae datos de un mensaje SASSLA y los acumula en datos_dict."""
-    # Efectos
-    if "#Sismo en progreso." in texto and "Efectos esperados" in texto:
+    """
+    Extrae datos de un mensaje SASSLA y los acumula en datos_dict.
+    - Ignora mensajes de "Tiempo Estimado de Llegada" (datos inmediatos sin valor posterior).
+    - Para mensajes de "Efectos esperados": captura TODAS las ciudades reportadas.
+      Si una ciudad ya tenía intensidad, conserva la más alta entre los mensajes recibidos.
+    - Para mensajes de epicentro y SSN: actualiza los campos correspondientes.
+    """
+    # Ignorar explícitamente los mensajes de tiempos estimados (desfasados de inmediato)
+    if REGEX_TIEMPOS.search(texto):
+        return
+
+    # Efectos esperados por ciudad
+    if REGEX_EFECTOS.search(texto):
+        if "intensidades_sassla" not in datos_dict:
+            datos_dict["intensidades_sassla"] = {}
+
         for linea in texto.split('\n'):
             m = REGEX_CIUDAD.search(linea)
             if m:
-                ciudad, intensidad = m.groups()
-                if ciudad == 'CDMX':
-                    datos_dict["intensidad_cdmx"] = intensidad
-                if ciudad == 'TOL':
-                    datos_dict["intensidad_tol"] = intensidad
+                ciudad_abr, intensidad = m.groups()
+                ciudad_abr = ciudad_abr.upper()
+                intensidad = intensidad.upper()
+                nivel_nuevo = ESCALA_INTENSIDAD.get(intensidad, 0)
+
+                # Ignorar la intensidad "--" (sin dato)
+                if nivel_nuevo == 0:
+                    continue
+
+                nivel_prev = ESCALA_INTENSIDAD.get(
+                    datos_dict["intensidades_sassla"].get(ciudad_abr, "--"), 0
+                )
+                # Conservar la intensidad más alta reportada entre múltiples mensajes
+                if nivel_nuevo > nivel_prev:
+                    datos_dict["intensidades_sassla"][ciudad_abr] = intensidad
+
+        # Retrocompatibilidad: mantener los campos planos de CDMX y TOL
+        datos_dict["intensidad_cdmx"] = datos_dict["intensidades_sassla"].get("CDMX", "IMPERCEPTIBLE")
+        datos_dict["intensidad_tol"]  = datos_dict["intensidades_sassla"].get("TOL", "IMPERCEPTIBLE")
 
     # Epicentro preliminar
     m_epi = REGEX_DETECTADO.search(texto)
     if m_epi:
         datos_dict["epicentro"] = m_epi.group(1).strip()
 
-    # SSN final
+    # SSN formato raw (con lat/lon — llega directamente del SSN vía Telethon)
     m_ssn = REGEX_SSN.search(texto)
     if m_ssn:
         mag, loc, edo, fecha, hora, lat, lon, pf = m_ssn.groups()
         datos_dict["ssn_magnitud"] = float(mag)
-        # Expandir abreviatura del estado a nombre completo
         edo_completo = _ESTADOS_MX.get(edo.upper().strip(), edo)
         datos_dict["ssn_ubicacion"] = f"{loc}, {edo_completo}"
-        if "epicentro" not in datos_dict:
+        if not datos_dict.get("epicentro"):
             datos_dict["epicentro"] = datos_dict["ssn_ubicacion"]
         datos_dict["ssn_latitud"] = float(lat)
         datos_dict["ssn_longitud"] = float(lon)
         datos_dict["hora_evento_sassla"] = f"20{fecha[-2:]}-{fecha[3:5]}-{fecha[0:2]} {hora}"
+
+    # SSN formato SASSLA-relay (sin lat/lon — SASSLA lo publica en su propio formato narrativo)
+    # Ej: "Preliminar: Magnitud 5.3, 26 km al SUROESTE de SAN MARCOS, GRO."
+    # Ej: "Magnitud final 5.2, 25 km al OESTE de San Marcos, Guerrero."
+    # Solo se captura la magnitud; el resto (epicentro, coordenadas) viene del SSN RSS.
+    m_ssn_relay = REGEX_SSN_SASSLA.search(texto)
+    if m_ssn_relay and not m_ssn:  # No sobreescribir si ya procesó el raw
+        mag_relay, loc_relay = m_ssn_relay.groups()
+        try:
+            mag_val = float(mag_relay)
+            # Solo actualizar si es la primera vez o si es el dato definitivo ("Magnitud final")
+            es_final = "final" in texto.lower()
+            if not datos_dict.get("ssn_magnitud") or es_final:
+                datos_dict["ssn_magnitud"] = mag_val
+        except ValueError:
+            pass
+
+    # Resumen post-evento de SASSLA
+    # Ej: "Se registró #sismo de intensidad FUERTE en Guerrero Costa Central."
+    # Ej: "Se estimó efecto MODERADO para la #CDMX."
+    m_resumen = REGEX_RESUMEN.search(texto)
+    if m_resumen:
+        intensidad_zona, zona = m_resumen.groups()
+        datos_dict["sassla_resumen_intensidad"] = intensidad_zona.upper()
+        datos_dict["sassla_resumen_zona"]        = zona.strip()
+    m_resumen_cdmx = REGEX_RESUMEN_CDMX.search(texto)
+    if m_resumen_cdmx:
+        efecto_cdmx = m_resumen_cdmx.group(1).upper()
+        # Actualizar la intensidad de CDMX si este resumen tiene dato más reciente
+        if "intensidades_sassla" not in datos_dict:
+            datos_dict["intensidades_sassla"] = {}
+        nivel_resumen = ESCALA_INTENSIDAD.get(efecto_cdmx, 0)
+        nivel_prev    = ESCALA_INTENSIDAD.get(datos_dict["intensidades_sassla"].get("CDMX", "--"), 0)
+        if nivel_resumen > nivel_prev:
+            datos_dict["intensidades_sassla"]["CDMX"] = efecto_cdmx
+            datos_dict["intensidad_cdmx"] = efecto_cdmx
 
 
 # ==========================================
