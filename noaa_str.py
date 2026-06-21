@@ -1,5 +1,9 @@
-# rev 16.4.0
-# rev anterior: rev 16.3.0
+# rev 16.5.0
+# rev anterior: rev 16.4.0
+# Changelog:
+#   16.5.0 — Se integra ssn_rss.py: en cada ciclo se consulta el RSS del SSN,
+#            se detectan sismos HGO >4.0 nuevos, se calcula la ventana de 2
+#            slots de mención y se inyectan al prompt como FUENTE 6.
 # Changelog:
 #   16.4.0 — Se pasa lunar en datos_para_bd para persistencia en MySQL.
 #   16.3.0 — Se migra la fuente de fase lunar a USNO (U.S. Naval Observatory), pasándola
@@ -30,6 +34,7 @@ import ia
 import meteorologo
 import prompt
 import sismo
+import ssn_rss
 import tts
 
 
@@ -111,6 +116,14 @@ def actualizar_audio_clima():
         meteorologo.volcar_datos_json(datos_web)
 
         # --------------------------------------------------
+        # 4.5  SSN RSS — Sismos HGO
+        # --------------------------------------------------
+        # 1) Actualizar estado: detectar grupos nuevos y registrarlos en BD
+        ssn_rss.actualizar_sismos_hgo(conexion_auditoria)
+        # 2) Obtener grupos que corresponden a ESTE slot horario
+        eventos_ssn = ssn_rss.obtener_eventos_para_reporte(hora_exacta)
+
+        # --------------------------------------------------
         # 5. Construcción del prompt
         # --------------------------------------------------
         contexto = None
@@ -124,6 +137,7 @@ def actualizar_audio_clima():
             contexto_sismo=contexto,
             modo_nocturno=modo_nocturno,
             lunar=lunar,
+            eventos_ssn=eventos_ssn,
         )
 
         # --------------------------------------------------

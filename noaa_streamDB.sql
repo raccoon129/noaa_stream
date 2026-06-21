@@ -454,4 +454,20 @@ COMMIT;
 
 
 -- ============================================================
+-- Migración v20.0.0 (comentario informativo — sin DDL adicional)
+-- Fecha: 2026-06-18
+-- Módulo: ssn_rss.py — Detección de sismos HGO via SSN RSS
+-- ============================================================
+-- El módulo ssn_rss.py reutiliza la tabla condiciones_especiales existente
+-- (introducida en v5, forma final en v17) para registrar sismos detectados
+-- en el estado de Hidalgo a través del feed RSS del SSN.
+--
+-- Valores fijos usados por ssn_rss.py:
+--   tipo          = 'SISMO_SSN_HIDALGO'
+--   fuente_alerta = 'SSN_RSS'
+--   subtipo       = 'M X.X' (magnitud del sismo principal del grupo)
+--   datos_fuente_primaria = JSON array con los sismos del grupo detectado
+--
+-- No se requieren columnas nuevas. El índice idx_tipo existente
+-- (sobre condiciones_especiales.tipo) cubre las consultas por tipo.
 -- ============================================================

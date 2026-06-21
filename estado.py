@@ -1,6 +1,9 @@
-# rev 15.0.0
-# rev anterior: monolito noaa_estable.py rev 14.9.2
+# rev 15.1.0
+# rev anterior: rev 15.0.0
 # Changelog:
+#   15.1.0 — Se añade ssn_sismos_activos: lista de grupos de sismos HGO detectados
+#            via SSN RSS que aún tienen slots de mención pendientes. Gestionado
+#            por ssn_rss.py; consultado en noaa_str.py y prompt.py.
 #   15.0.0 — Módulo nuevo. Centraliza el estado mutable compartido entre dj.py,
 #            meteorologo.py y noaa_str.py, evitando importaciones circulares.
 #            También expone la utilidad ts() usada en todos los módulos.
@@ -59,5 +62,19 @@ sismo_es_simulacro: bool = False
 
 # ID de la fila en condiciones_especiales del evento actual.
 # Se asigna justo después del INSERT inicial para que enriquecer_con_apis()
-# use siempre el ID correcto (evita race condition con _obtener_ultimo_id_evento).
+# usa siempre el ID correcto (evita race condition con _obtener_ultimo_id_evento).
 ultimo_id_sismo_bd: int = None
+
+
+# ==========================================
+#   ESTADO GLOBAL SSN RSS (HIDALGO)
+# ==========================================
+
+# Lista de grupos de sismos HGO activos con slots de mención pendientes.
+# Cada elemento es un dict con las claves:
+#   clave         — str identificador único del grupo (timestamp|ubicacion)
+#   bd_id         — int ID del registro en condiciones_especiales, o None
+#   grupo         — list[dict] de sismos del grupo
+#   slots_mencion — list[str] de slots HH:MM pendientes de procesar
+# Gestionado por ssn_rss.py; consumido en noaa_str.py y prompt.py.
+ssn_sismos_activos: list = []

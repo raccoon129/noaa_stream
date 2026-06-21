@@ -1,8 +1,10 @@
-# rev 17.1.0
-# rev anterior: rev 17.0.0
+# rev 17.2.0
+# rev anterior: rev 17.1.0
 # Changelog:
-#   17.1.0 — Se optimiza el formato de fecha: ahora se genera en Python como una cadena
-#            natural en español (incluyendo día de la semana) para el prompt.
+#   17.2.0 — Se añade FUENTE 6 (SSN RSS): _bloque_ssn_hgo() inyecta datos de
+#            sismos detectados en Hidalgo (HGO) al prompt cuando existen eventos
+#            activos para el slot horario actual. Nueva Regla 18 con instrucción
+#            para mención informativa (sin alerta) de la actividad sísmica local.
 #   17.0.0 — _bloque_owm(): se añade la dirección cardinal del viento (wind_dir_cardinal)
 #            proveniente de OWM al final de la línea de viento actual, si está disponible.
 #            _bloque_forecast(): se añade línea de punto de rocío cuando
@@ -543,14 +545,54 @@ def _bloque_sismo(contexto_sismo: Optional[dict]) -> str:
 
 
 # ==========================================
-#   PUNTO DE ENTRADA PÚBLICO
+#   BLOQUE FUENTE 6: SISMO SSN HIDALGO
 # ==========================================
 
+def _bloque_ssn_hgo(eventos_ssn: list) -> str:
+    """
+    Genera el bloque de texto de actividad sísmica en Hidalgo para el prompt.
+    Recibe la lista de grupos activos obtenida por ssn_rss.obtener_eventos_para_reporte().
+    Retorna cadena vacía si no hay eventos para este slot.
+    """
+    if not eventos_ssn:
+        return ""
+
+    lineas = []
+    for evento in eventos_ssn:
+        grupo = evento.get("grupo", [])
+        # Ordenar por magnitud descendente para presentar el más fuerte primero
+        sismos_ordenados = sorted(grupo, key=lambda x: -x["magnitud"])
+        for s in sismos_ordenados:
+            lineas.append(
+                "- M {mag}  {fecha}  {hora} (hora centro)\n"
+                "  {ubicacion}\n"
+                "  Lat: {lat}°  Long: {lon}°  Prof: {prof} km".format(
+                    mag=s["magnitud"],
+                    fecha=s["fecha_str"],
+                    hora=s["hora_str"],
+                    ubicacion=s["ubicacion"],
+                    lat=s["latitud"]   if s["latitud"]   is not None else "N/D",
+                    lon=s["longitud"]  if s["longitud"]  is not None else "N/D",
+                    prof=s["profundidad_km"] if s["profundidad_km"] is not None else "N/D",
+                )
+            )
+
+    if not lineas:
+        return ""
+
+    cuerpo = "\n".join(lineas)
+    return (
+        "FUENTE 6 (SSN/Servicio Sismológico Nacional — Actividad sísmica local):\n"
+        "Se han registrado los siguientes sismos en el estado de Hidalgo:\n"
+        f"{cuerpo}\n"
+    )
+
 def construir_prompt(cna, owm, aqi, forecast=None, contexto_sismo=None,
-                     modo_nocturno=False, lunar=None):
+                     modo_nocturno=False, lunar=None, eventos_ssn=None):
     """
     Ensambla el prompt completo para el modelo de IA.
-    v16.6: añade parámetro lunar (dict de fase lunar o None).
+    v17.2: añade parámetro eventos_ssn (list de grupos de sismos HGO activos).
+    v17.1: fecha pre-generada en Python en español natural.
     v16.1: se retiran cna_hora y rocio_relevante (method=3 suspendido).
 
     Parámetros:
@@ -558,9 +600,10 @@ def construir_prompt(cna, owm, aqi, forecast=None, contexto_sismo=None,
         owm            — dict de OWM (incluye pressure_etiqueta, weather_id_etiqueta) o None
         aqi            — dict de AQI (incluye aod_etiqueta) o None
         forecast       — dict pre-procesado del forecast horario o None
-        contexto_sismo — dict con datos del sismo reciente o None
+        contexto_sismo — dict con datos del sismo reciente (alerta SASSLA) o None
         modo_nocturno  — True si hora_actual >= sunset → perspectiva de mañana ampliada
         lunar          — dict de fase lunar de USNO o None
+        eventos_ssn    — list de grupos de sismos HGO activos (ssn_rss) o None/[]
 
     Retorna el texto del prompt listo para enviar a Gemini/Groq.
     """
@@ -588,6 +631,7 @@ def construir_prompt(cna, owm, aqi, forecast=None, contexto_sismo=None,
     bloque_fc    = _bloque_forecast(forecast)
     regla_lluvia = _regla_lluvia(owm, cna)
     bloque_sis   = _bloque_sismo(contexto_sismo)
+    bloque_ssn   = _bloque_ssn_hgo(eventos_ssn or [])
 
     # La fase lunar se incluye en el prompt en modo nocturno o si es visible de día
     luna_visible_dia = lunar.get("visible_de_dia", False) if lunar else False
@@ -600,6 +644,7 @@ def construir_prompt(cna, owm, aqi, forecast=None, contexto_sismo=None,
         "Eres el sistema automatizado de alerta meteorológica regional. "
         "Escribe un reporte de radio (NO mencionar palabras como 'radioescuchas' o similares) muy detallado para {ciudad} y alrededores. Evita ser redundante en la redacción y personaliza según la hora actual.\n\n"
         "{bloque_sis}"
+        "{ssn}"
         "{cna}\n\n"
         "{owm}\n\n"
         "FUENTE 3 (Open-Meteo - Salud Ambiental y Radiación):\n"
@@ -732,6 +777,12 @@ def construir_prompt(cna, owm, aqi, forecast=None, contexto_sismo=None,
         "   Si la FUENTE 4 no contiene ninguna línea de punto de rocío,"
         " NO menciones rocio, humedad nocturna ni valores numéricos de saturación.\n\n"
 
+        "18. Actividad sísmica local (FUENTE 6 — SSN): si la FUENTE 6 está disponible, "
+        "significa que el SSN registró un sismo en el estado de Hidalgo "
+        "que es relevante. Menciónalo de forma INFORMATIVA al inicio del reporte"
+        "Usa los datos que aparecen en la FUENTE 6: magnitud, hora (en formato natural), ubicación referencial y "
+        "profundidad en kilómetros. Debe extenderse la información disponible sin generar ambigüedad.\n\n"
+
         "Al inicio de la redacción, antes del saludo, coloca exactamente la siguiente "
         "cortinilla institucional:\n"
         "\"Sistema automatizado de monitoreo climatológico preliminar con motivos de estudio; "
@@ -744,6 +795,7 @@ def construir_prompt(cna, owm, aqi, forecast=None, contexto_sismo=None,
     ).format(
         ciudad=config.CIUDAD,
         bloque_sis=bloque_sis,
+        ssn=bloque_ssn,
         cna=bloque_cna,
         owm=bloque_owm,
         aqi=bloque_aqi,
