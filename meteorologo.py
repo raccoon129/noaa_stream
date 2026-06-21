@@ -1,6 +1,11 @@
-# rev 17.0.0
-# rev anterior: rev 16.8.0
+# rev 17.1.0
+# rev anterior: rev 17.0.0
 # Changelog:
+#   17.1.0 — Se añaden obtener_estaciones_solares() y obtener_evento_solar_cercano().
+#            Consultan la API USNO /api/seasons una vez al arrancar (caché por año
+#            en estado.estaciones_solares). Devuelven solsticios, equinoccios,
+#            perihelio y afelio con hora en UTC-6. Inyectados en el prompt como
+#            FUENTE 7 condicionada a ventana de ±VENTANA_EVENTO_SOLAR_DIAS días.
 #   17.0.0 — OWM: se añade wind_dir_cardinal (traducción de wind_deg en grados a punto
 #            cardinal en español, ej. "del noreste"). La traducción se hace en Python
 #            antes del prompt para evitar alucinaciones del modelo.
@@ -145,6 +150,156 @@ def obtener_calidad_aire():
         msg = _sanitizar_error(str(e))
         print(f"[ERROR] - {estado.ts()} Conexión Open-Meteo AQI: {e}")
         return None, msg
+
+
+# ==========================================
+#   RECOLECIÓN ESTACIONES SOLARES (USNO)
+# ==========================================
+
+# Mapa phenom → nombre en español con contexto estacional (hemisferio norte)
+_EVENTOS_SOLARES = {
+    # Solsticios: junio = verano, diciembre = invierno (hemisferio norte)
+    ("Solstice",  6): "Solsticio de verano",
+    ("Solstice", 12): "Solsticio de invierno",
+    # Equinoccios: marzo = primavera, septiembre = otoño
+    ("Equinox",   3): "Equinoccio de primavera",
+    ("Equinox",   9): "Equinoccio de otoño",
+    # Perihelio y afelio (independientes del mes)
+    ("Perihelion", 0): "Perihelio (órbita más cercana al Sol)",
+    ("Aphelion",   0): "Afelio (órbita más lejana del Sol)",
+}
+
+# Frases de significado corto para cada tipo de evento (FUENTE 7 en el prompt)
+_SIGNIFICADO_EVENTO = {
+    "Solstice":   {
+        6:  "el día más largo del año en el hemisferio norte",
+        12: "la noche más larga del año en el hemisferio norte",
+    },
+    "Equinox":    {
+        3:  "día y noche de duración casi igual; inicio de la primavera",
+        9:  "día y noche de duración casi igual; inicio del otoño",
+    },
+    "Perihelion": {0: "La Tierra alcanza su punto más próximo al Sol en su órbita"},
+    "Aphelion":   {0: "La Tierra alcanza su punto más lejano del Sol en su órbita"},
+}
+
+
+def obtener_estaciones_solares():
+    """
+    Consulta la API USNO /api/seasons para el año actual y cachea el resultado
+    en estado.estaciones_solares. Si la caché ya corresponde al año actual,
+    retorna la lista existente sin hacer otra petición.
+
+    Los tiempos USNO vienen en UTC (tz=0); se convierten a UTC-6 (hora centro México).
+
+    Retorna: lista de dicts (puede ser vacía si la API falla).
+    Cada dict contiene:
+        phenom, nombre_es, significado, year, month, day, hora_local, fecha_dt
+    """
+    tz_mx = datetime.timezone(datetime.timedelta(hours=-6))
+    anio_actual = datetime.datetime.now(tz_mx).year
+
+    # --- Servir desde caché si ya existe para este año ---
+    if estado.anio_estaciones_cache == anio_actual and estado.estaciones_solares:
+        return estado.estaciones_solares
+
+    url = f"{config.USNO_SEASONS_URL}?year={anio_actual}"
+    try:
+        res = requests.get(url, timeout=10)
+        if res.status_code != 200:
+            print("[ESTACIONES] - {} WARN USNO seasons HTTP {}".format(estado.ts(), res.status_code))
+            return []
+
+        raw = res.json()
+        eventos_raw = raw.get("data", [])
+        resultado = []
+
+        for ev in eventos_raw:
+            phenom = ev.get("phenom", "")
+            year   = ev.get("year",  anio_actual)
+            month  = ev.get("month", 0)
+            day    = ev.get("day",   0)
+            time_s = ev.get("time",  "00:00")  # formato "HH:MM" en UTC
+
+            # Convertir hora UTC → UTC-6
+            try:
+                h_utc, m_utc = map(int, time_s.split(":"))
+                dt_utc = datetime.datetime(year, month, day, h_utc, m_utc,
+                                           tzinfo=datetime.timezone.utc)
+                dt_local = dt_utc.astimezone(tz_mx)
+                hora_local = dt_local.strftime("%H:%M")
+                fecha_dt   = dt_local.date()
+            except Exception:
+                hora_local = time_s
+                try:
+                    fecha_dt = datetime.date(year, month, day)
+                except Exception:
+                    continue
+
+            # Nombre en español: primero buscar con mes, luego sin mes (perihelio/afelio)
+            nombre_es = (
+                _EVENTOS_SOLARES.get((phenom, month))
+                or _EVENTOS_SOLARES.get((phenom, 0))
+                or phenom
+            )
+            significado = (
+                _SIGNIFICADO_EVENTO.get(phenom, {}).get(month)
+                or _SIGNIFICADO_EVENTO.get(phenom, {}).get(0)
+                or ""
+            )
+
+            resultado.append({
+                "phenom":     phenom,
+                "nombre_es":  nombre_es,
+                "significado": significado,
+                "year":       year,
+                "month":      month,
+                "day":        day,
+                "hora_local": hora_local,
+                "fecha_dt":   fecha_dt,
+            })
+
+        estado.estaciones_solares    = resultado
+        estado.anio_estaciones_cache = anio_actual
+        print(
+            "[ESTACIONES] - {} OK {} eventos solares cacheados para {}.".format(
+                estado.ts(), len(resultado), anio_actual
+            )
+        )
+        return resultado
+
+    except Exception as e:
+        print("[ESTACIONES] - {} WARN Error al consultar USNO seasons: {}".format(estado.ts(), e))
+        return []
+
+
+def obtener_evento_solar_cercano():
+    """
+    Busca en estado.estaciones_solares el evento más próximo a hoy
+    (pasado o futuro) dentro de la ventana config.VENTANA_EVENTO_SOLAR_DIAS.
+
+    Si hay empate de distancia, privilegia el evento futuro sobre el pasado.
+    Retorna el dict del evento (con clave adicional 'dias_al_evento') o None.
+    """
+    if not estado.estaciones_solares:
+        return None
+
+    tz_mx = datetime.timezone(datetime.timedelta(hours=-6))
+    hoy   = datetime.datetime.now(tz_mx).date()
+    ventana = config.VENTANA_EVENTO_SOLAR_DIAS
+
+    candidatos = []
+    for ev in estado.estaciones_solares:
+        delta = (ev["fecha_dt"] - hoy).days   # negativo = pasado
+        if -ventana <= delta <= ventana:
+            candidatos.append({**ev, "dias_al_evento": delta})
+
+    if not candidatos:
+        return None
+
+    # Ordenar por |delta| ascendente; empate: futuro (delta≥0) antes que pasado
+    candidatos.sort(key=lambda x: (abs(x["dias_al_evento"]), -x["dias_al_evento"]))
+    return candidatos[0]
 
 
 # ==========================================

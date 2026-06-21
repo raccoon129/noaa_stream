@@ -1,6 +1,9 @@
-# rev 15.1.0
+# rev 15.2.0
 # rev anterior: rev 15.0.0
 # Changelog:
+#   15.2.0 — Se añade caché de estaciones solares USNO (estaciones_solares,
+#            anio_estaciones_cache). Se consultan una vez al arrancar desde
+#            noaa_str.iniciar_estacion() y se reutilizan por todo el año.
 #   15.1.0 — Se añade ssn_sismos_activos: lista de grupos de sismos HGO detectados
 #            via SSN RSS que aún tienen slots de mención pendientes. Gestionado
 #            por ssn_rss.py; consultado en noaa_str.py y prompt.py.
@@ -78,3 +81,22 @@ ultimo_id_sismo_bd: int = None
 #   slots_mencion — list[str] de slots HH:MM pendientes de procesar
 # Gestionado por ssn_rss.py; consumido en noaa_str.py y prompt.py.
 ssn_sismos_activos: list = []
+
+
+# ==========================================
+#   ESTADO GLOBAL — ESTACIONES SOLARES (USNO)
+# ==========================================
+
+# Lista de eventos solares del año actual (solsticios, equinoccios, perihelio, afelio).
+# Cada elemento es un dict con las claves:
+#   phenom          — str en inglés: 'Solstice', 'Equinox', 'Perihelion', 'Aphelion'
+#   nombre_es       — str en español con contexto estacional
+#   year, month, day— ints
+#   hora_local      — str 'HH:MM' en hora centro (UTC-6)
+#   fecha_dt        — datetime.date del evento
+# Se rellena en noaa_str.iniciar_estacion() y persiste toda la sesión.
+estaciones_solares: list = []
+
+# Año al que pertenece la caché. Si cambia el año calendario,
+# meteorologo.obtener_estaciones_solares() rehace la consulta.
+anio_estaciones_cache: int = 0

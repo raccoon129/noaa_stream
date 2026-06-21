@@ -1,9 +1,10 @@
-# rev 16.5.0
-# rev anterior: rev 16.4.0
+# rev 16.6.0
+# rev anterior: rev 16.5.0
 # Changelog:
-#   16.5.0 — Se integra ssn_rss.py: en cada ciclo se consulta el RSS del SSN,
-#            se detectan sismos HGO >4.0 nuevos, se calcula la ventana de 2
-#            slots de mención y se inyectan al prompt como FUENTE 6.
+#   16.6.0 — Se integran las estaciones solares USNO: obtener_estaciones_solares()
+#            se llama una sola vez en iniciar_estacion(); en cada ciclo se calcula
+#            el evento cercano con obtener_evento_solar_cercano() y se pasa a
+#            construir_prompt() como evento_solar (FUENTE 7 en el prompt).
 # Changelog:
 #   16.4.0 — Se pasa lunar en datos_para_bd para persistencia en MySQL.
 #   16.3.0 — Se migra la fuente de fase lunar a USNO (U.S. Naval Observatory), pasándola
@@ -118,17 +119,20 @@ def actualizar_audio_clima():
         # --------------------------------------------------
         # 4.5  SSN RSS — Sismos HGO
         # --------------------------------------------------
-        # 1) Actualizar estado: detectar grupos nuevos y registrarlos en BD
         ssn_rss.actualizar_sismos_hgo(conexion_auditoria)
-        # 2) Obtener grupos que corresponden a ESTE slot horario
         eventos_ssn = ssn_rss.obtener_eventos_para_reporte(hora_exacta)
+
+        # --------------------------------------------------
+        # 4.6  Estaciones solares — evento cercano (FUENTE 7)
+        # --------------------------------------------------
+        # Solo computa proximidad; la caché ya fue cargada al arrancar.
+        evento_solar = meteorologo.obtener_evento_solar_cercano()
 
         # --------------------------------------------------
         # 5. Construcción del prompt
         # --------------------------------------------------
         contexto = None
         if estado.sismo_activo and estado.ciclos_sismo_restantes > 0:
-            # Re-consultar APIs sísmicas para datos más consolidados
             contexto = sismo.enriquecer_con_apis()
         elif estado.sismo_activo:
             contexto = estado.datos_sismo
@@ -138,6 +142,7 @@ def actualizar_audio_clima():
             modo_nocturno=modo_nocturno,
             lunar=lunar,
             eventos_ssn=eventos_ssn,
+            evento_solar=evento_solar,
         )
 
         # --------------------------------------------------
@@ -372,6 +377,10 @@ def iniciar_estacion():
 
     # Iniciar el monitor de alertas sísmicas (SASSLA)
     sismo.iniciar_monitor()
+
+    # Precarga única de estaciones solares (USNO) — resultado cacheado en estado.py
+    print(f"[SISTEMA] - {estado.ts()} 🌍 Cargando eventos solares USNO...")
+    meteorologo.obtener_estaciones_solares()
 
     # Pregunta de arranque interactivo
     ejecutar_ahora = preguntar_arranque_inicial()

@@ -1,10 +1,11 @@
-# rev 17.2.0
-# rev anterior: rev 17.1.0
+# rev 17.3.0
+# rev anterior: rev 17.2.0
 # Changelog:
-#   17.2.0 — Se añade FUENTE 6 (SSN RSS): _bloque_ssn_hgo() inyecta datos de
-#            sismos detectados en Hidalgo (HGO) al prompt cuando existen eventos
-#            activos para el slot horario actual. Nueva Regla 18 con instrucción
-#            para mención informativa (sin alerta) de la actividad sísmica local.
+#   17.3.0 — Se añade FUENTE 7 (Estaciones solares USNO): _bloque_estaciones()
+#            inyecta el evento solar cercano (±VENTANA_EVENTO_SOLAR_DIAS) al prompt.
+#            Incluye solsticios, equinoccios, perihelio y afelio con lenguaje de
+#            proximidad (hoy/mañana/hace N días). No añade nuevas REGLAS;
+#            el bloque es autoexplicativo para el modelo.
 #   17.0.0 — _bloque_owm(): se añade la dirección cardinal del viento (wind_dir_cardinal)
 #            proveniente de OWM al final de la línea de viento actual, si está disponible.
 #            _bloque_forecast(): se añade línea de punto de rocío cuando
@@ -587,23 +588,92 @@ def _bloque_ssn_hgo(eventos_ssn: list) -> str:
         f"{cuerpo}\n"
     )
 
+
+# ==========================================
+#   BLOQUE FUENTE 7: ESTACIÓN SOLAR (USNO)
+# ==========================================
+
+def _bloque_estaciones(evento_solar) -> str:
+    """
+    Genera el bloque FUENTE 7 para el prompt cuando existe un evento solar
+    (solsticio, equinoccio, perihelio o afelio) dentro de la ventana de
+    ±VENTANA_EVENTO_SOLAR_DIAS días respecto a hoy.
+
+    El bloque es autoexplicativo: le indica al modelo qué es el evento y
+    cómo referenciarlo sin necesidad de una Regla adicional en REGLAS.
+    Retorna cadena vacía si no hay evento activo.
+    """
+    if not evento_solar:
+        return ""
+
+    nombre   = evento_solar.get("nombre_es", evento_solar.get("phenom", ""))
+    hora     = evento_solar.get("hora_local", "N/D")
+    signif   = evento_solar.get("significado", "")
+    delta    = evento_solar.get("dias_al_evento", 0)
+
+    # Fecha en formato natural
+    try:
+        fd = evento_solar["fecha_dt"]
+        _MESES = ["enero","febrero","marzo","abril","mayo","junio",
+                  "julio","agosto","septiembre","octubre","noviembre","diciembre"]
+        fecha_natural = "{} de {} de {}".format(fd.day, _MESES[fd.month - 1], fd.year)
+    except Exception:
+        fecha_natural = str(evento_solar.get("fecha_dt", ""))
+
+    # Lenguaje de proximidad
+    if delta == 0:
+        cuando = "HOY"
+        instruccion = (
+            f"Este evento ocurre HOY a las {hora} (hora centro). "
+            "Ménciona esto de forma natural e informativa en el reporte, "
+            "integrado al contexto astronómico o como dato notable del día."
+        )
+    elif delta == 1:
+        cuando = "mañana"
+        instruccion = "Menéciona que mañana ocurrirá este evento."
+    elif delta == -1:
+        cuando = "ayer"
+        instruccion = "Puedes mencionar brevemente que ayer tuvo lugar este evento."
+    elif delta > 0:
+        cuando = f"en {delta} días"
+        instruccion = f"Menéciona que en {delta} días ocurrirá este evento."
+    else:
+        cuando = f"hace {abs(delta)} días"
+        instruccion = f"Puedes mencionar brevemente que hace {abs(delta)} días tuvo lugar."
+
+    lineas = [
+        f"FUENTE 7 (USNO — Evento solar/astronómico):",
+        f"- Evento: {nombre}",
+        f"- Fecha: {fecha_natural}",
+        f"- Hora (hora centro, UTC-6): {hora}",
+        f"- Referencia temporal: {cuando}",
+    ]
+    if signif:
+        lineas.append(f"- Significado: {signif}")
+    lineas.append(f"- Instrucción: {instruccion}")
+
+    return "\n".join(lineas) + "\n\n"
+
 def construir_prompt(cna, owm, aqi, forecast=None, contexto_sismo=None,
-                     modo_nocturno=False, lunar=None, eventos_ssn=None):
+                     modo_nocturno=False, lunar=None, eventos_ssn=None,
+                     evento_solar=None):
     """
     Ensambla el prompt completo para el modelo de IA.
-    v17.2: añade parámetro eventos_ssn (list de grupos de sismos HGO activos).
+    v17.3: añade evento_solar (dict del evento solar cercano de USNO o None).
+    v17.2: añade eventos_ssn (list de grupos de sismos HGO activos).
     v17.1: fecha pre-generada en Python en español natural.
     v16.1: se retiran cna_hora y rocio_relevante (method=3 suspendido).
 
     Parámetros:
         cna            — salida de conagua.obtener_pronostico() o None
-        owm            — dict de OWM (incluye pressure_etiqueta, weather_id_etiqueta) o None
-        aqi            — dict de AQI (incluye aod_etiqueta) o None
-        forecast       — dict pre-procesado del forecast horario o None
+        owm            — dict de OWM o None
+        aqi            — dict de AQI o None
+        forecast       — dict del forecast horario o None
         contexto_sismo — dict con datos del sismo reciente (alerta SASSLA) o None
-        modo_nocturno  — True si hora_actual >= sunset → perspectiva de mañana ampliada
+        modo_nocturno  — True si hora_actual >= sunset
         lunar          — dict de fase lunar de USNO o None
         eventos_ssn    — list de grupos de sismos HGO activos (ssn_rss) o None/[]
+        evento_solar   — dict del evento solar cercano (meteorologo) o None
 
     Retorna el texto del prompt listo para enviar a Gemini/Groq.
     """
@@ -632,6 +702,7 @@ def construir_prompt(cna, owm, aqi, forecast=None, contexto_sismo=None,
     regla_lluvia = _regla_lluvia(owm, cna)
     bloque_sis   = _bloque_sismo(contexto_sismo)
     bloque_ssn   = _bloque_ssn_hgo(eventos_ssn or [])
+    bloque_est   = _bloque_estaciones(evento_solar)
 
     # La fase lunar se incluye en el prompt en modo nocturno o si es visible de día
     luna_visible_dia = lunar.get("visible_de_dia", False) if lunar else False
@@ -651,6 +722,7 @@ def construir_prompt(cna, owm, aqi, forecast=None, contexto_sismo=None,
         "{aqi}\n\n"
         "{fc}\n"
         "{lunar}"
+        "{estaciones}"
         "REGLAS PARA LA REDACCIÓN (CRÍTICAS):\n"
         "1. Inicia con un saludo formal simple según la hora del día (buenos dias/tardes/noches).\n"
         "{regla_lluvia}\n"
@@ -796,6 +868,7 @@ def construir_prompt(cna, owm, aqi, forecast=None, contexto_sismo=None,
         ciudad=config.CIUDAD,
         bloque_sis=bloque_sis,
         ssn=bloque_ssn,
+        estaciones=bloque_est,
         cna=bloque_cna,
         owm=bloque_owm,
         aqi=bloque_aqi,
