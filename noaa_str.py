@@ -20,6 +20,7 @@
 #   15.1.5 — datos_para_bd reestructurado para el esquema normalizado por fuente.
 
 import datetime
+import json
 import os
 import threading
 import time
@@ -127,6 +128,45 @@ def actualizar_audio_clima():
         # --------------------------------------------------
         # Solo computa proximidad; la caché ya fue cargada al arrancar.
         evento_solar = meteorologo.obtener_evento_solar_cercano()
+
+        # Guardar en BD únicamente el día que ocurre el evento (dias_al_evento == 0)
+        if evento_solar and evento_solar.get("dias_al_evento") == 0:
+            clave_bd = "{phenom}|{fecha}".format(
+                phenom=evento_solar.get("phenom", ""),
+                fecha=str(evento_solar.get("fecha_dt", "")),
+            )
+            if clave_bd not in estado.estaciones_guardadas_bd:
+                bd.guardar_condicion_especial({
+                    "timestamp_evento": "{} {}".format(
+                        evento_solar["fecha_dt"], evento_solar.get("hora_local", "00:00") + ":00"
+                    ),
+                    "tipo":             "EVENTO_SOLAR_USNO",
+                    "subtipo":          evento_solar.get("phenom"),
+                    "descripcion":      "{} — {}".format(
+                        evento_solar.get("nombre_es", ""),
+                        evento_solar.get("significado", ""),
+                    ),
+                    "ubicacion":        None,
+                    "latitud":          None,
+                    "longitud":         None,
+                    "fuente_alerta":    "USNO_SEASONS",
+                    "datos_fuente_primaria": json.dumps({
+                        "phenom":    evento_solar.get("phenom"),
+                        "nombre_es": evento_solar.get("nombre_es"),
+                        "year":      evento_solar.get("year"),
+                        "month":     evento_solar.get("month"),
+                        "day":       evento_solar.get("day"),
+                        "hora_local": evento_solar.get("hora_local"),
+                    }, ensure_ascii=False),
+                    "datos_fuente_secundaria": None,
+                    "datos_investigacion":     None,
+                    "guion_inmediato":         None,
+                    "prompt_inmediato":        None,
+                    "guion_analisis":          None,
+                    "prompt_analisis":         None,
+                    "modelo_ia_usado":         None,
+                })
+                estado.estaciones_guardadas_bd.add(clave_bd)
 
         # --------------------------------------------------
         # 5. Construcción del prompt

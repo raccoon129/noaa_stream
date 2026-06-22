@@ -100,3 +100,9 @@ estaciones_solares: list = []
 # Año al que pertenece la caché. Si cambia el año calendario,
 # meteorologo.obtener_estaciones_solares() rehace la consulta.
 anio_estaciones_cache: int = 0
+
+# Conjunto de claves de eventos solares ya guardados en BD durante esta sesión.
+# Formato de cada clave: "phenom|YYYY-MM-DD" (ej. "Solstice|2026-06-21").
+# Previene inserciones duplicadas si el ciclo de 30 min corre varias veces
+# en el mismo día del evento. Se reinicia al reiniciar el proceso.
+estaciones_guardadas_bd: set = set()
