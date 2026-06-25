@@ -9,7 +9,7 @@
 #                            Profundidad: Z km </description>
 #            El formato anterior (M 4.0 + Lat/Long con °) no existe en el feed.
 #   1.0.0 — Módulo inicial. Consulta el RSS del Servicio Sismológico Nacional (SSN)
-#            y detecta sismos ocurridos en Hidalgo (HGO) con magnitud > 4.0.
+#            y detecta sismos ocurridos en Hidalgo (HGO) con magnitud > 3.5.
 #            Implementa deduplicación por clave, cálculo de slots horarios,
 #            agrupamiento temporal (60 min) y filtro de antigüedad (35 min).
 
@@ -157,12 +157,12 @@ def _filtrar_hgo(items: list) -> list:
 def _agrupar_por_ventana(items_hgo: list) -> list:
     """
     Agrupa sismos HGO en grupos de hasta _VENTANA_GRUPO_MIN minutos.
-    Un grupo se crea cuando hay al menos UN sismo con magnitud > 4.0.
-    Sismos en el mismo grupo que no superen 4.0 se incluyen igualmente
+    Un grupo se crea cuando hay al menos UN sismo con magnitud > 3.5.
+    Sismos en el mismo grupo que no superen 3.5 se incluyen igualmente
     en la mención (son parte del mismo episodio sísmico).
 
     Retorna lista de grupos; cada grupo es una lista de dicts de sismos.
-    Solo se retornan grupos que tengan al menos un sismo > 4.0.
+    Solo se retornan grupos que tengan al menos un sismo > 3.5.
     """
     if not items_hgo:
         return []
@@ -188,8 +188,8 @@ def _agrupar_por_ventana(items_hgo: list) -> list:
     if grupo_actual:
         grupos.append(grupo_actual)
 
-    # Solo conservar grupos con al menos un sismo > 4.0
-    grupos_validos = [g for g in grupos if any(s["magnitud"] > 4.0 for s in g)]
+    # Solo conservar grupos con al menos un sismo > 3.5
+    grupos_validos = [g for g in grupos if any(s["magnitud"] > 3.5 for s in g)]
     return grupos_validos
 
 
@@ -257,7 +257,7 @@ def _calcular_slots_mencion(timestamp_sismo: datetime.datetime) -> list:
 def actualizar_sismos_hgo(conexion_auditoria=None):
     """
     Consulta el RSS del SSN, detecta grupos de sismos nuevos en Hidalgo (HGO)
-    con magnitud > 4.0 y actualiza estado.ssn_sismos_activos.
+    con magnitud > 3.5 y actualiza estado.ssn_sismos_activos.
 
     - Sismos más antiguos que _MAX_ANTIGUEDAD_MIN minutos se descartan
       (no se mencionan, no se guardan en BD).
