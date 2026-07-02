@@ -1,6 +1,11 @@
-# rev 15.0.0
-# rev anterior: monolito noaa_estable.py rev 14.9.2
+# rev 15.1.0
+# rev anterior: rev 15.0.0
 # Changelog:
+#   15.1.0 — Timeout en subprocess.run() de edge-tts (90 s) y sox (60 s).
+#            Sin timeout, una conexión a Azure TTS que se cuelga bloquea
+#            el hilo de actualizar_audio_clima() indefinidamente, impidiendo
+#            que estado.actualizando_clima vuelva a False y dejando al DJ
+#            varado en modo espera.
 #   15.0.0 — Extracción de la síntesis de voz a módulo independiente.
 #            Incluye: escritura del guion en disco, llamada a edge-tts,
 #            conversión sox a WAV 22050Hz mono, rotación atómica del
@@ -38,24 +43,35 @@ def sintetizar(texto_guion: str) -> bool:
             f.write(texto_guion)
 
         # 2. Síntesis edge-tts → MP3 temporal
+        # Timeout de 90 s: edge-tts usa la API de Azure TTS vía red; sin timeout
+        # una conexión colgada bloquea este hilo indefinidamente.
         cmd_tts = (
             f"edge-tts --voice {config.VOZ_TTS} "
             f"-f {config.ARCHIVO_TEXTO} "
             f"--write-media {config.ARCHIVO_TEMP_MP3}"
         )
-        subprocess.run(cmd_tts, shell=True, stderr=subprocess.DEVNULL)
+        try:
+            subprocess.run(cmd_tts, shell=True, stderr=subprocess.DEVNULL, timeout=90)
+        except subprocess.TimeoutExpired:
+            print(f"[TTS] - {estado.ts()} ❌ edge-tts superó el timeout (90 s). Abortando síntesis.")
+            return False
 
         if not os.path.exists(config.ARCHIVO_TEMP_MP3):
             print(f"[TTS] - {estado.ts()} ❌ edge-tts no generó el archivo MP3.")
             return False
 
         # 3. Conversión sox: MP3 → WAV 22050Hz mono
+        # Timeout de 60 s: sox es local pero puede bloquearse si el MP3 está corrupto.
         cmd_sox = (
             f"sox '{config.ARCHIVO_TEMP_MP3}' "
             f"-t wav -r {config.SAMPLE_RATE} -c 1 "
             f"'{config.ARCHIVO_TEMP_WAV}'"
         )
-        subprocess.run(cmd_sox, shell=True, stderr=subprocess.DEVNULL)
+        try:
+            subprocess.run(cmd_sox, shell=True, stderr=subprocess.DEVNULL, timeout=60)
+        except subprocess.TimeoutExpired:
+            print(f"[TTS] - {estado.ts()} ❌ sox superó el timeout (60 s). Abortando síntesis.")
+            return False
 
         if not os.path.exists(config.ARCHIVO_TEMP_WAV):
             print(f"[TTS] - {estado.ts()} ❌ sox no generó el archivo WAV.")

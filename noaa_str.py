@@ -116,12 +116,15 @@ def actualizar_audio_clima():
         # --------------------------------------------------
         datos_web = meteorologo.construir_datos_web(owm, cna_hoy, aqi, hora_exacta)
         meteorologo.volcar_datos_json(datos_web)
+        print(f"[SISTEMA] - {estado.ts()} 🌐 datos.json actualizado ({hora_exacta}).")
 
         # --------------------------------------------------
         # 4.5  SSN RSS — Sismos HGO
         # --------------------------------------------------
+        print(f"[SSN] - {estado.ts()} 📡 Consultando RSS del Servicio Sismológico Nacional...")
         ssn_rss.actualizar_sismos_hgo(conexion_auditoria)
         eventos_ssn = ssn_rss.obtener_eventos_para_reporte(hora_exacta)
+        print(f"[SSN] - {estado.ts()} ✅ RSS SSN procesado ({len(eventos_ssn)} evento(s) relevante(s) para el reporte).")
 
         # --------------------------------------------------
         # 4.6  Estaciones solares — evento cercano (FUENTE 7)
