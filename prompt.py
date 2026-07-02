@@ -883,8 +883,7 @@ def construir_prompt(cna, owm, aqi, forecast=None, contexto_sismo=None,
         "profundidad en kilómetros. Debe extenderse la información disponible sin generar ambigüedad.\n\n"
 
         "19. Polvo en suspensión (FUENTE 3): si la FUENTE 3 incluye la línea ‘Polvo en suspensión’, "
-        "inclúyelo DENTRO del párrafo de calidad del aire, NO como párrafo independiente. "
-        "Mencionalo en lenguaje accesible, describe si hay polvo o partículas en el aire que puedan afectar la visibilidad o irritar "
+        "inclúyelo al final del párrafo de calidad del aire. Mencionalo en lenguaje accesible, describe si hay polvo o partículas en el aire que puedan afectar la visibilidad o irritar "
         "vías respiratorias. El porcentaje indica qué fracción del PM10 total se debe a polvo mineral o sahariano. Hay que hacer su mención de forma objetiva con respaldo de la información disponible y las condiciones climáticas: "
         "si supera el 30%, dále énfasis (ej. 'una parte importante de las partículas en el aire hoy corresponde a polvo'). "
         "Si el porcentaje es bajo (≤15%), basta una mención breve sin alarmar. "
@@ -898,8 +897,8 @@ def construir_prompt(cna, owm, aqi, forecast=None, contexto_sismo=None,
         "Moderada (200-500 W/m²): sol presente con intervalos nublados. "
         "Alta (500-800 W/m²): día soleado con buena insolación. "
         "Muy alta (>800 W/m²): sol intenso, condiciones de máxima insolación. "
-        "Incorpórala dentro del párrafo de condiciones generales o de UV cuando sea relevante diurno. "
-        "Si la hora del reporte es nocturna, OMITE esta línea.\n\n"
+        "Incorpórala al final del párrafo de condiciones generales o de UV cuando sea relevante diurno. "
+        "Si la hora del reporte es nocturno, OMITE esta línea.\n\n"
 
         "Al inicio de la redacción, antes del saludo, coloca exactamente la siguiente "
         "cortinilla institucional:\n"
