@@ -136,7 +136,7 @@ def obtener_calidad_aire():
         f"https://air-quality-api.open-meteo.com/v1/air-quality"
         f"?latitude={config.LATITUD}&longitude={config.LONGITUD}"
         f"&current=us_aqi,pm10,pm2_5,uv_index,carbon_monoxide,"
-        f"nitrogen_dioxide,sulphur_dioxide,ozone,aerosol_optical_depth"
+        f"nitrogen_dioxide,sulphur_dioxide,ozone,aerosol_optical_depth,dust"
     )
     try:
         res = requests.get(url, timeout=10)
@@ -499,7 +499,7 @@ def obtener_forecast_horario():
         f"https://api.open-meteo.com/v1/forecast"
         f"?latitude={config.LATITUD}&longitude={config.LONGITUD}"
         f"&hourly=precipitation_probability,precipitation,windspeed_10m,cape"
-        f",dewpoint_2m,freezing_level_height"
+        f",dewpoint_2m,freezing_level_height,shortwave_radiation"
         f"&forecast_days=2"
         f"&timezone=America%2FMexico_City"
     )
@@ -665,7 +665,7 @@ def _etiqueta_presion(pressure):
 def _extraer_aqi(datos_aqi):
     """
     Normaliza los campos de calidad del aire de la respuesta cruda de Open-Meteo.
-    Incluye aerosol_optical_depth.
+    Incluye aerosol_optical_depth y dust.
     """
     cur = datos_aqi.get("current", {})
     return {
@@ -678,6 +678,7 @@ def _extraer_aqi(datos_aqi):
         "so2":                   cur.get("sulphur_dioxide"),
         "ozono":                 cur.get("ozone"),
         "aerosol_optical_depth": cur.get("aerosol_optical_depth"),
+        "dust":                  cur.get("dust"),
     }
 
 
@@ -761,14 +762,15 @@ def _extraer_forecast(datos_fc, hora_actual):
         freezing_level_m  — isoterma 0°C mínima en la ventana (m), o None
         helada_etiqueta   — etiqueta de alerta de helada, o None
     """
-    horario  = datos_fc.get("hourly", {})
-    tiempos  = horario.get("time", [])
-    probs    = horario.get("precipitation_probability", [])
-    precs    = horario.get("precipitation", [])
-    vientos  = horario.get("windspeed_10m", [])
-    capes    = horario.get("cape", [])
-    dewpts   = horario.get("dewpoint_2m", [])
-    freezing = horario.get("freezing_level_height", [])
+    horario   = datos_fc.get("hourly", {})
+    tiempos   = horario.get("time", [])
+    probs     = horario.get("precipitation_probability", [])
+    precs     = horario.get("precipitation", [])
+    vientos   = horario.get("windspeed_10m", [])
+    capes     = horario.get("cape", [])
+    dewpts    = horario.get("dewpoint_2m", [])
+    freezing  = horario.get("freezing_level_height", [])
+    shortwave = horario.get("shortwave_radiation", [])
 
     # Identificar el índice de la hora actual en la serie
     fecha_hoy     = datetime.datetime.now().strftime("%Y-%m-%d")
@@ -797,7 +799,11 @@ def _extraer_forecast(datos_fc, hora_actual):
     ventana_capes    = capes[indice_actual:fin]
     ventana_tiempos  = tiempos[indice_actual:fin]
     ventana_dewpts   = dewpts[indice_actual:fin]   if dewpts   else []
-    ventana_freezing = freezing[indice_actual:fin] if freezing else []
+    ventana_freezing  = freezing[indice_actual:fin]  if freezing  else []
+    # shortwave_radiation: ventana de 24h desde hora actual (no solo 6h)
+    # para calcular el pico solar del día completo y comparar con mañana.
+    fin_dia = min(indice_actual + 24, len(tiempos))
+    ventana_shortwave = shortwave[indice_actual:fin_dia] if shortwave else []
 
     if not ventana_probs:
         return _forecast_vacio()
@@ -867,6 +873,14 @@ def _extraer_forecast(datos_fc, hora_actual):
     freezing_level_m = min(ventana_freezing) if ventana_freezing else None
     helada_etiqueta  = _etiqueta_helada(freezing_level_m)
 
+    # --- Radiación solar máxima del día (pico de shortwave_radiation > 0) ---
+    # Solo tiene valor narrativo durante horas diurnas (hora_actual 06-19).
+    # Calcula el pico de las próximas ~24h para contexto de insolación.
+    shortwave_pico = None
+    if ventana_shortwave:
+        pico_sw = max(ventana_shortwave)
+        shortwave_pico = round(pico_sw, 1) if pico_sw is not None and pico_sw > 0 else None
+
     return {
         "prob_lluvia_max":  prob_max,
         "hora_pico_lluvia": hora_pico,
@@ -884,6 +898,7 @@ def _extraer_forecast(datos_fc, hora_actual):
         "dew_point_relevante": dew_point_relevante,
         "freezing_level_m":   freezing_level_m,
         "helada_etiqueta":    helada_etiqueta,
+        "shortwave_pico":     shortwave_pico,
     }
 
 
@@ -907,6 +922,7 @@ def _forecast_vacio():
         "dew_point_critico":  False,
         "freezing_level_m":   None,
         "helada_etiqueta":    None,
+        "shortwave_pico":     None,
     }
 
 

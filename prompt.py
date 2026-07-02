@@ -235,16 +235,34 @@ def _bloque_aqi(aqi):
     else:
         linea_aod = ""
 
+    # Polvo en suspensión: solo si el valor es > 0 y representa una fraccion
+    # no trivial del PM10 (> 10%). Si PM10 no está disponible, se expone solo
+    # el valor absoluto de polvo.
+    dust_val = aqi.get("dust")
+    pm10_val = aqi.get("pm10")
+    if dust_val is not None and dust_val > 0:
+        if pm10_val and pm10_val > 0:
+            pct_dust = round((dust_val / pm10_val) * 100, 1)
+            linea_dust = "\n- Polvo en suspensión: {0:.1f} μg/m³ ({1}% del material particulado PM10)".format(
+                dust_val, pct_dust
+            )
+        else:
+            linea_dust = "\n- Polvo en suspensión: {0:.1f} μg/m³".format(dust_val)
+    else:
+        linea_dust = ""
+
     return (
         "- AQI: {0} | PM10: {1} μg/m³ | PM2.5: {2} μg/m³\n"
         "- Índice UV: {3}\n"
         "- Gases: CO: {4} μg/m³ | NO2: {5} μg/m³ | SO2: {6} μg/m³ | Ozono: {7} μg/m³"
         "{8}"
+        "{9}"
     ).format(
         aqi["aqi"], aqi["pm10"], aqi["pm25"],
         aqi["uv"],
         aqi["co"], aqi["no2"], aqi["so2"], aqi["ozono"],
-        linea_aod
+        linea_aod,
+        linea_dust,
     )
 
 
@@ -332,6 +350,15 @@ def _bloque_forecast(fc):
             lineas.append(
                 "- Punto de rocío (referencia técnica — saturación crítica): {0}°C".format(fc["dew_point"])
             )
+
+    # Radiación solar: solo si hay un pico real (> 0 W/m²).
+    # Solo se envía al prompt para enriquecer contexto de días con sol intenso.
+    if fc.get("shortwave_pico") is not None:
+        lineas.append(
+            "- Radiación solar máxima proyectada próximas 24h: {0} W/m²".format(
+                fc["shortwave_pico"]
+            )
+        )
 
     cuerpo = "\n".join(lineas)
     return "FUENTE 4 (Open-Meteo Pronóstico a corto plazo - próximas 6 horas):\n{0}{1}".format(cuerpo, refs_str)
@@ -854,6 +881,25 @@ def construir_prompt(cna, owm, aqi, forecast=None, contexto_sismo=None,
         "que es relevante. Menciónalo de forma INFORMATIVA al inicio del reporte"
         "Usa los datos que aparecen en la FUENTE 6: magnitud, hora (en formato natural), ubicación referencial y "
         "profundidad en kilómetros. Debe extenderse la información disponible sin generar ambigüedad.\n\n"
+
+        "19. Polvo en suspensión (FUENTE 3): si la FUENTE 3 incluye la línea ‘Polvo en suspensión’, "
+        "inclúyelo DENTRO del párrafo de calidad del aire, NO como párrafo independiente. "
+        "Mencionalo en lenguaje accesible, describe si hay polvo o partículas en el aire que puedan afectar la visibilidad o irritar "
+        "vías respiratorias. El porcentaje indica qué fracción del PM10 total se debe a polvo mineral o sahariano. Hay que hacer su mención de forma objetiva con respaldo de la información disponible y las condiciones climáticas: "
+        "si supera el 30%, dále énfasis (ej. 'una parte importante de las partículas en el aire hoy corresponde a polvo'). "
+        "Si el porcentaje es bajo (≤15%), basta una mención breve sin alarmar. "
+        "Si la línea no está presente en la FUENTE 3, NO menciones polvo en absoluto.\n\n"
+
+        "20. Radiación solar (FUENTE 4): si la FUENTE 4 incluye la línea ‘Radiación solar máxima proyectada’, "
+        "méncionala en el contexto del clima del día, no de forma aislada. "
+        "Tráducela a lenguaje cotidiano: NO uses el término técnico 'shortwave radiation' ni el valor en W/m². "
+        "En cambio, usa la siguiente escala orientativa para comunicar la intensidad solar del día y complementa según las condiciones climáticas actuales: "
+        "Baja (<200 W/m²): cielo cubierto, sol sin presencia real. "
+        "Moderada (200-500 W/m²): sol presente con intervalos nublados. "
+        "Alta (500-800 W/m²): día soleado con buena insolación. "
+        "Muy alta (>800 W/m²): sol intenso, condiciones de máxima insolación. "
+        "Incorpórala dentro del párrafo de condiciones generales o de UV cuando sea relevante diurno. "
+        "Si la hora del reporte es nocturna, OMITE esta línea.\n\n"
 
         "Al inicio de la redacción, antes del saludo, coloca exactamente la siguiente "
         "cortinilla institucional:\n"

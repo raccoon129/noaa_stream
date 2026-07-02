@@ -236,11 +236,11 @@ def guardar_reporte_en_bd(datos_reporte: dict) -> Optional[int]:
                 """INSERT INTO datos_openmeteo (
                        reporte_id,
                        aqi, pm10, pm25, uv_index,
-                       co, no2, so2, ozono, aod
+                       co, no2, so2, ozono, aod, dust
                    ) VALUES (
                        %s,
                        %s, %s, %s, %s,
-                       %s, %s, %s, %s, %s
+                       %s, %s, %s, %s, %s, %s
                    )""",
                 (
                     nuevo_id,
@@ -249,6 +249,7 @@ def guardar_reporte_en_bd(datos_reporte: dict) -> Optional[int]:
                     aqi.get("co"),    aqi.get("no2"),
                     aqi.get("so2"),   aqi.get("ozono"),
                     aqi.get("aerosol_optical_depth"),
+                    aqi.get("dust"),
                 ),
             )
             conexion.commit()
@@ -267,13 +268,15 @@ def guardar_reporte_en_bd(datos_reporte: dict) -> Optional[int]:
                        prob_lluvia_max, hora_pico_lluvia, prec_total,
                        viento_actual, viento_max, hora_viento_max,
                        cape_max, hora_cape_max, cape_etiqueta,
-                       dew_point, freezing_level_m, helada_etiqueta
+                       dew_point, freezing_level_m, helada_etiqueta,
+                       shortwave_pico
                    ) VALUES (
                        %s,
                        %s, %s, %s,
                        %s, %s, %s,
                        %s, %s, %s,
-                       %s, %s, %s
+                       %s, %s, %s,
+                       %s
                    )""",
                 (
                     openmeteo_id,
@@ -285,6 +288,7 @@ def guardar_reporte_en_bd(datos_reporte: dict) -> Optional[int]:
                     fc.get("cape_etiqueta"),
                     fc.get("dew_point"),        fc.get("freezing_level_m"),
                     fc.get("helada_etiqueta"),
+                    fc.get("shortwave_pico"),
                 ),
             )
             conexion.commit()

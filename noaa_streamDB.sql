@@ -89,6 +89,8 @@ CREATE TABLE IF NOT EXISTS `datos_openmeteo` (
   `ozono`      decimal(9,3)  DEFAULT NULL COMMENT 'Ozono O3 (μg/m³)',
   -- v16
   `aod`        decimal(6,3)  DEFAULT NULL COMMENT 'Aerosol Optical Depth'
+  -- v20
+  ,`dust`       decimal(7,3)  DEFAULT NULL COMMENT 'Polvo en suspensión (dust, μg/m³) — Open-Meteo AQI'
 
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
   COMMENT='Datos de calidad del aire e índice UV Open-Meteo por reporte climatológico';
@@ -260,6 +262,8 @@ CREATE TABLE IF NOT EXISTS `datos_forecast_openmeteo` (
   `dew_point`         decimal(5,1)  DEFAULT NULL COMMENT 'Punto de rocío promedio en ventana (°C)',
   `freezing_level_m`  decimal(8,1)  DEFAULT NULL COMMENT 'Isoterma 0°C mínima en ventana (m)',
   `helada_etiqueta`   varchar(40)   DEFAULT NULL COMMENT 'Etiqueta de alerta de helada',
+  -- v20
+  `shortwave_pico`    decimal(8,1)  DEFAULT NULL COMMENT 'Radiación solar máxima proyectada próximas 24h (W/m²)',
   CONSTRAINT `fk_forecast_openmeteo`
     FOREIGN KEY (`openmeteo_id`) REFERENCES `datos_openmeteo`(`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
