@@ -686,19 +686,45 @@ def _extraer_aqi(datos_aqi):
 #   ETIQUETA INTERPRETATIVA DE AOD
 # ==========================================
 
-def _etiqueta_aod(aod):
+def _etiqueta_aod(aod, dust=None):
     """
     Convierte el valor de AOD a una etiqueta de claridad del cielo.
     Retorna None si el valor no supera el umbral narrativo (0.2),
     indicando a prompt.py que debe omitirse.
+
+    Parámetros:
+        aod  — Aerosol Optical Depth (adimensional). Mide la extinción de
+               radiación solar por aerosoles en la columna vertical de
+               atmósfera. Valores típicos: 0.0 (limpio) a >1.0 (carga severa).
+        dust — Concentración superficial de polvo mineral (μg/m³), campo
+               directo del modelo Open-Meteo. Se usa para determinar
+               objetivamente si el polvo mineral es el contribuyente
+               principal de la carga de aerosoles.
+               Umbral: > 20 μg/m³ = contribución mineral relevante
+               (referencia: percentil 75 de polvo en zonas áridas continentales).
+
+    Solo usa datos medidos directamente por los modelos; no infiere origen
+    estacional ni aplica correcciones de humedad.
     """
     if aod is None or aod <= 0.2:
         return None
+
+    # Complemento de origen: solo cuando el campo dust está disponible.
+    # El campo dust de Open-Meteo mide exclusivamente polvo mineral;
+    # su presencia es evidencia directa, no inferida.
+    if dust is not None:
+        if dust > 20:
+            complemento = ", con presencia de polvo mineral en suspensión"
+        else:
+            complemento = ", con predominio de partículas finas de origen no mineral"
+    else:
+        complemento = ""
+
     if aod <= 0.4:
-        return "opacidad atmosférica moderada, con ligera reducción de la nitidez del horizonte"
+        return "opacidad atmosférica moderada, con ligera reducción de la nitidez del horizonte" + complemento
     if aod <= 0.6:
-        return "opacidad atmosférica notable, cielo visualmente velado"
-    return "opacidad atmosférica elevada, cielo con carga significativa de partículas finas"
+        return "opacidad atmosférica notable, cielo visualmente velado" + complemento
+    return "opacidad atmosférica elevada, cielo con carga significativa de partículas" + complemento
 
 
 # ==========================================
@@ -1035,7 +1061,10 @@ def recolectar(conexion_auditoria):
     # --- Open-Meteo AQI ---
     if datos_aqi_raw and "current" in datos_aqi_raw:
         aqi = _extraer_aqi(datos_aqi_raw)
-        aqi["aod_etiqueta"] = _etiqueta_aod(aqi.get("aerosol_optical_depth"))
+        aqi["aod_etiqueta"] = _etiqueta_aod(
+            aqi.get("aerosol_optical_depth"),
+            dust=aqi.get("dust"),
+        )
         disponible_aqi = True
     else:
         aqi = None
