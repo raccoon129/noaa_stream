@@ -20,6 +20,7 @@ MUNICIPIO_CONAGUA    = "MUNICIPIO"           # Ver sección 1
 CLAVE_ESTADO_CONAGUA = "00"                  # Ver sección 1
 LATITUD              = "00.0000"             # Ver sección 1
 LONGITUD             = "-00.0000"            # Ver sección 1
+ALTITUD_M            = 2100                  # Ver sección 1
 FRECUENCIA_FM        = "87.5"               # Ver sección 1
 POTENCIA_MW          = "10"                 # Ver sección 1
 
@@ -34,8 +35,9 @@ OWM_API_KEY = "TU_API_KEY_OWM"             # Ver sección 2
 # ==========================================
 
 GEMINI_API_KEY        = "TU_API_KEY_GEMINI" # Ver sección 3
-MODELO_GEMINI          = "gemini-3-flash-preview"
-MODELO_GEMINI_RESPALDO = "gemini-3.1-flash-lite"
+MODELO_GEMINI          = "gemini-3.5-flash"
+MODELO_GEMINI_RESPALDO = "gemini-3-flash-preview"
+MODELO_GEMINI_EXTRA    = "gemini-3.1-flash-lite"
 
 GROQ_API_KEY = "TU_API_KEY_GROQ"           # Ver sección 3
 MODELO_GROQ  = "llama-3.3-70b-versatile"
@@ -104,7 +106,7 @@ HORAS_PROGRAMADAS = [                        # Ver sección 8
 ]
 
 # ==========================================
-#   CONFIGURACIÓN SÍSMICA
+#   CONFIGURACIÓN SÍSMICA Y ASTRONÓMICA
 # ==========================================
 
 # --- Telegram (Telethon) ---
@@ -124,12 +126,14 @@ CICLOS_ENRIQUECIMIENTO  = 4
 
 # --- Consultas post-evento ---
 SSN_RSS_URL             = "http://www.ssn.unam.mx/rss/ultimos-sismos.xml"
+USNO_SEASONS_URL        = "https://aa.usno.navy.mil/api/seasons"
+VENTANA_EVENTO_SOLAR_DIAS = 3
 
-# --- Bounding box México para consultas USGS ---
+# --- Bounding box México completo para consultas USGS ---
 SISMO_MIN_LAT = 14.0
-SISMO_MAX_LAT = 20.0
-SISMO_MIN_LON = -106.0
-SISMO_MAX_LON = -92.0
+SISMO_MAX_LAT = 32.5
+SISMO_MIN_LON = -118.5
+SISMO_MAX_LON = -86.0
 SISMO_MIN_MAG = 3.5
 
 # --- Calendario de simulacros ---
@@ -146,6 +150,7 @@ ARCHIVO_SIMULACROS = "simulacros.json"
 | `MUNICIPIO_CONAGUA` | Nombre del municipio **exacto** que usa CONAGUA (sin coma, sin país). | `"Pachuca de Soto"` |
 | `CLAVE_ESTADO_CONAGUA` | Clave numérica de dos dígitos del estado en CONAGUA. Consulta la [tabla de claves](https://smn.conagua.gob.mx/es/climatologia/informacion-climatologica/informacion-estadistica-climatologica). | `"13"` (Hidalgo) |
 | `LATITUD` / `LONGITUD` | Coordenadas decimales de la estación (usadas por **Open-Meteo AQI**). Puedes obtenerlas en [latlong.net](https://www.latlong.net/). | `"20.1011"` / `"-98.7591"` |
+| `ALTITUD_M` | Altitud en metros sobre el nivel del mar. Afecta el umbral de heladas (isoterma 0°C) y la escala de CAPE. | `2100` |
 | `FRECUENCIA_FM` | Frecuencia FM en MHz (solo informativa, se usa en el guion de voz). | `"87.5"` |
 | `POTENCIA_MW` | Potencia de emisión en mW (solo informativa). | `"10"` |
 
@@ -172,10 +177,11 @@ ARCHIVO_SIMULACROS = "simulacros.json"
 ### Google Gemini
 
 | Parámetro | Descripción |
-|---|---|
+|---|---|---|
 | `GEMINI_API_KEY` | Clave de la API de Google Gemini. |
 | `MODELO_GEMINI` | Modelo principal a usar. |
 | `MODELO_GEMINI_RESPALDO` | Modelo de respaldo si el principal falla o está saturado. |
+| `MODELO_GEMINI_EXTRA` | Tercer modelo de respaldo. Si se deja vacío, se omite en la cascada. |
 
 **Cómo obtener la clave:**
 1. Accede a [Google AI Studio](https://aistudio.google.com/app/apikey).
@@ -185,8 +191,9 @@ ARCHIVO_SIMULACROS = "simulacros.json"
 
 | Modelo | Velocidad | Calidad | Uso recomendado |
 |---|---|---|---|
-| `gemini-3-flash-preview` | Rápido | Alta | Producción (principal) |
-| `gemini-3.1-flash-lite` | Muy rápido | Media | Respaldo / bajo costo |
+| `gemini-3.5-flash` | Rápido | Alta | Producción (principal) |
+| `gemini-3-flash-preview` | Rápido | Media-Alta | Respaldo / bajo costo |
+| `gemini-3.1-flash-lite` | Muy rápido | Media | Segundo respaldo |
 | `gemini-3.1-pro` | Lento | Muy alta | Pruebas de calidad |
 
 ### Groq
@@ -293,14 +300,16 @@ Lista de horarios en formato `"HH:MM"` (24 h) en los que el sistema generará y 
 ## Sección 9 — Configuración Sísmica
 
 | Parámetro | Descripción |
-|---|---|
+|---|---|---|
 | `TELEGRAM_API_ID` | Tu API ID de Telegram (entero). Obtener en https://my.telegram.org → API development tools. |
 | `TELEGRAM_API_HASH` | Tu API Hash de Telegram (cadena de texto). |
 | `TELEGRAM_CANAL` | Canal público a monitorear para alertas sísmicas (ej. `"sassla"`). |
 | `REPETICIONES_SISMO_REAL` | Número de repeticiones del sonido de alerta para sismos reales. |
 | `REPETICIONES_SIMULACRO` | Número de repeticiones del sonido de alerta para simulacros. |
 | `CICLOS_ENRIQUECIMIENTO` | Número de ciclos de reporte en los que se re-consultan las APIs sísmicas para actualizar magnitud/epicentro. |
-| Bounding box (`SISMO_*`) | Coordenadas y magnitud mínima para filtrar sismos del USGS que afecten el área de interés. |
+| `USNO_SEASONS_URL` | URL del servicio web de la USNO para consultar solsticios y equinoccios. |
+| `VENTANA_EVENTO_SOLAR_DIAS` | Margen de días antes y después de un evento solar para incluirlo en el guion de clima. |
+| Bounding box (`SISMO_*`) | Coordenadas y magnitud mínima para filtrar sismos del USGS que afecten a la República Mexicana (bounding box completo). |
 | `ARCHIVO_SIMULACROS` | Archivo JSON con las fechas y horas de simulacros programados. |
 
 ---
