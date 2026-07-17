@@ -461,16 +461,19 @@ def iniciar_estacion():
                 continue
 
             # 1d. SISMO REAL: bucle de espera con TTS + silencio
+            # Se usa transmitir_silencio() directamente (PCM en memoria) en lugar de
+            # inyectar silencio.wav, para evitar errores si el archivo tiene formato
+            # incompatible (ej. WAVE_FORMAT_EXTENSIBLE, código 65534).
             print(f"\n[DJ] - {estado.ts()} ⏳ Esperando reporte sísmico...")
             while not estado.sismo_guion_listo:
                 # Reproducir audio de espera si existe
                 if os.path.exists(config.ARCHIVO_SISMO_ESPERA):
                     dj.inyectar_audio_al_stream(config.ARCHIVO_SISMO_ESPERA, es_espera=True, es_alarma=True)
-                # Silencio ×3
+                # Silencio ×3 — PCM generado en memoria, sin depender de silencio.wav
                 for _ in range(3):
                     if estado.sismo_guion_listo:
                         break
-                    dj.inyectar_audio_al_stream(config.ARCHIVO_SILENCIO, es_espera=True, es_alarma=True)
+                    dj.transmitir_silencio(2.0, es_alarma=True)
 
             # 1e. Reporte sísmico listo → reproducir ×2
             print(f"\n[DJ] - {estado.ts()} 🎙️  Transmitiendo reporte sísmico inmediato (x2)")

@@ -63,6 +63,32 @@ def _sintetizar_sismo(texto_guion):
         return False
 
 
+# ==========================================
+#   HELPERS DE FALLBACK MULTI-FUENTE
+# ==========================================
+
+def _mag_str(d: dict) -> str:
+    """
+    Retorna la mejor magnitud disponible como cadena.
+    Orden de prioridad: SSN → USGS → 'N/A'.
+    """
+    m = d.get("ssn_magnitud") or d.get("usgs_magnitud")
+    return str(m) if m is not None else "N/A"
+
+
+def _epi_str(d: dict) -> str:
+    """
+    Retorna el mejor texto de epicentro disponible.
+    Orden de prioridad: epicentro (SASSLA/SSN) → ssn_ubicacion → usgs_ubicacion → 'Desconocido'.
+    """
+    return (
+        d.get("epicentro")
+        or d.get("ssn_ubicacion")
+        or d.get("usgs_ubicacion")
+        or "Desconocido"
+    )
+
+
 def flujo_alerta_sismica():
     """
     Orquesta el flujo cuando se detecta un sismo o simulacro.
@@ -171,9 +197,9 @@ def flujo_alerta_sismica():
         id_bd = bd.guardar_condicion_especial({
             "timestamp_evento":       datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "tipo":                   "SISMO",
-            "subtipo":                f"Magnitud {estado.datos_sismo.get('ssn_magnitud', 'N/A')}",
-            "descripcion":            f"Epicentro: {estado.datos_sismo.get('epicentro', 'Desconocido')}",
-            "ubicacion":              estado.datos_sismo.get("epicentro"),
+            "subtipo":                f"Magnitud {_mag_str(estado.datos_sismo)}",
+            "descripcion":            f"Epicentro: {_epi_str(estado.datos_sismo)}",
+            "ubicacion":              _epi_str(estado.datos_sismo),
             "latitud":                estado.datos_sismo.get("ssn_latitud"),
             "longitud":               estado.datos_sismo.get("ssn_longitud"),
             "fuente_alerta":          "SASSLA",
@@ -236,10 +262,10 @@ def enriquecer_con_apis():
         bd.actualizar_condicion_especial(
             id_evento,
             {
-                # Actualizar campos descriptivos con los datos definitivos del SSN
-                "subtipo":     f"Magnitud {estado.datos_sismo.get('ssn_magnitud', 'N/A')}",
-                "descripcion": f"Epicentro: {estado.datos_sismo.get('epicentro', 'Desconocido')}",
-                "ubicacion":   estado.datos_sismo.get("epicentro"),
+                # Actualizar campos descriptivos con los datos definitivos disponibles
+                "subtipo":     f"Magnitud {_mag_str(estado.datos_sismo)}",
+                "descripcion": f"Epicentro: {_epi_str(estado.datos_sismo)}",
+                "ubicacion":   _epi_str(estado.datos_sismo),
                 "latitud":     estado.datos_sismo.get("ssn_latitud"),
                 "longitud":    estado.datos_sismo.get("ssn_longitud"),
                 # Fuente primaria actualizada con el snapshot completo
