@@ -243,6 +243,41 @@ CREATE TABLE IF NOT EXISTS `condiciones_especiales` (
 
 
 -- ============================================================
+-- 2b. historial_condiciones_especiales (v21.0.0)
+--     FK → condiciones_especiales.id  |  ON DELETE CASCADE
+-- ============================================================
+CREATE TABLE IF NOT EXISTS `historial_condiciones_especiales` (
+  `id`                      int          NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  `condicion_especial_id`   int          NOT NULL COMMENT 'FK → condiciones_especiales.id',
+  `timestamp_actualizacion` datetime     NOT NULL DEFAULT current_timestamp(),
+  
+  -- Datos descriptivos y geográficos en esta iteración
+  `subtipo`                 varchar(100) DEFAULT NULL,
+  `descripcion`             text         DEFAULT NULL,
+  `ubicacion`               varchar(255) DEFAULT NULL,
+  `latitud`                 decimal(10,6) DEFAULT NULL,
+  `longitud`                decimal(10,6) DEFAULT NULL,
+  
+  -- Snapshots de datos en formato JSON de este ciclo de enriquecimiento
+  `datos_fuente_primaria`   JSON         DEFAULT NULL,
+  `datos_fuente_secundaria` JSON         DEFAULT NULL,
+  `datos_investigacion`     JSON         DEFAULT NULL,
+  
+  -- Guiones opcionales generados en este punto
+  `guion_analisis`          text         DEFAULT NULL,
+  `prompt_analisis`         text         DEFAULT NULL,
+  `modelo_ia_usado`         varchar(50)  DEFAULT NULL,
+
+  CONSTRAINT `fk_historial_condicion` 
+    FOREIGN KEY (`condicion_especial_id`) 
+    REFERENCES `condiciones_especiales` (`id`) 
+    ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE INDEX IF NOT EXISTS `idx_historial_condicion_id` ON `historial_condiciones_especiales`(`condicion_especial_id`);
+
+
+-- ============================================================
 -- 3. datos_forecast_openmeteo (v16/v17, forma final)
 --    FK → datos_openmeteo.id  |  ON DELETE CASCADE
 -- ============================================================

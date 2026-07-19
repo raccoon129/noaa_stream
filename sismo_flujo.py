@@ -239,7 +239,8 @@ def enriquecer_con_apis():
     if not estado.datos_sismo:
         return None
 
-    print(f"[SISMO] - {estado.ts()} 🔍 Re-consultando APIs para enriquecimiento...")
+    ciclo_actual = config.CICLOS_ENRIQUECIMIENTO - estado.ciclos_sismo_restantes + 1
+    print(f"[SISMO] - {estado.ts()} 🔍 Re-consultando APIs para enriquecimiento (Ciclo {ciclo_actual}/{config.CICLOS_ENRIQUECIMIENTO})...")
     _consultar_todas_las_apis()
     guardar_datos_locales(estado.datos_sismo)
 
@@ -259,29 +260,32 @@ def enriquecer_con_apis():
             "fecha_hora":     estado.datos_sismo.get("hora_evento_sassla"),
         })
 
-        bd.actualizar_condicion_especial(
-            id_evento,
-            {
-                # Actualizar campos descriptivos con los datos definitivos disponibles
-                "subtipo":     f"Magnitud {_mag_str(estado.datos_sismo)}",
-                "descripcion": f"Epicentro: {_epi_str(estado.datos_sismo)}",
-                "ubicacion":   _epi_str(estado.datos_sismo),
-                "latitud":     estado.datos_sismo.get("ssn_latitud"),
-                "longitud":    estado.datos_sismo.get("ssn_longitud"),
-                # Fuente primaria actualizada con el snapshot completo
-                "datos_fuente_primaria":   json.dumps(estado.datos_sismo),
-                # Fuente secundaria = confirmación definitiva del SSN
-                "datos_fuente_secundaria": datos_ssn_snap,
-                # Investigación = APIs internacionales consolidadas
-                "datos_investigacion":     json.dumps({
-                    "usgs_magnitud": estado.datos_sismo.get("usgs_magnitud"),
-                    "emsc_magnitud": estado.datos_sismo.get("emsc_magnitud"),
-                    "gfz_magnitud":  estado.datos_sismo.get("gfz_magnitud"),
-                    "usgs_tsunami":  estado.datos_sismo.get("usgs_tsunami"),
-                    "replicas":      estado.datos_sismo.get("replicas_detectadas", 0)
-                }),
-            }
-        )
+        datos_actualizados = {
+            # Campos descriptivos con los datos definitivos disponibles
+            "subtipo":     f"Magnitud {_mag_str(estado.datos_sismo)}",
+            "descripcion": f"Epicentro: {_epi_str(estado.datos_sismo)}",
+            "ubicacion":   _epi_str(estado.datos_sismo),
+            "latitud":     estado.datos_sismo.get("ssn_latitud"),
+            "longitud":    estado.datos_sismo.get("ssn_longitud"),
+            # Fuente primaria actualizada con el snapshot completo
+            "datos_fuente_primaria":   json.dumps(estado.datos_sismo),
+            # Fuente secundaria = confirmación definitiva del SSN
+            "datos_fuente_secundaria": datos_ssn_snap,
+            # Investigación = APIs internacionales consolidadas
+            "datos_investigacion":     json.dumps({
+                "usgs_magnitud": estado.datos_sismo.get("usgs_magnitud"),
+                "emsc_magnitud": estado.datos_sismo.get("emsc_magnitud"),
+                "gfz_magnitud":  estado.datos_sismo.get("gfz_magnitud"),
+                "usgs_tsunami":  estado.datos_sismo.get("usgs_tsunami"),
+                "replicas":      estado.datos_sismo.get("replicas_detectadas", 0)
+            }),
+        }
+
+        # 1. Registrar entrada histórica para auditoría y trazabilidad
+        bd.guardar_historial_condicion_especial(id_evento, datos_actualizados)
+
+        # 2. Actualizar el registro principal para mantener al día los datos del frontend
+        bd.actualizar_condicion_especial(id_evento, datos_actualizados)
     except Exception as e:
         print(f"[SISMO] - {estado.ts()} ⚠️ Error actualizando BD en enriquecimiento: {e}")
 
@@ -348,7 +352,18 @@ def _consultar_todas_las_apis():
         datos["usgs_tsunami"]  = usgs.get("tsunami")
         if usgs.get("ubicacion") and not datos.get("epicentro"):
             datos["epicentro"] = usgs["ubicacion"]
-        print(f"[SISMO] - {estado.ts()} \u2139\ufe0f USGS: M{usgs['magnitud']}")
+        # Resiliencia: si el SSN está caído, adoptamos las coordenadas de USGS
+        if usgs.get("latitud") is not None and datos.get("ssn_latitud") is None:
+            datos["ssn_latitud"] = usgs["latitud"]
+        if usgs.get("longitud") is not None and datos.get("ssn_longitud") is None:
+            datos["ssn_longitud"] = usgs["longitud"]
+        if usgs.get("profundidad_km") is not None and datos.get("ssn_profundidad_km") is None:
+            datos["ssn_profundidad_km"] = usgs["profundidad_km"]
+        print(f"[SISMO] - {estado.ts()} ℹ️ USGS: M{usgs['magnitud']}")
+
+    # Volver a leer coordenadas para que EMSC y GFZ aprovechen las de USGS si el SSN falló
+    lat = datos.get("ssn_latitud")
+    lon = datos.get("ssn_longitud")
 
     # EMSC (requiere lat/lon)
     emsc = consultar_emsc(hora_str, lat, lon) or {}
@@ -377,12 +392,16 @@ def _consultar_todas_las_apis():
 
 
 def _obtener_ultimo_id_evento():
-    """Intenta obtener el ID del último evento en BD. Retorna None si falla."""
+    """Intenta obtener el ID del último evento SISMO en BD dentro de las últimas 3 horas. Retorna None si falla."""
     try:
         conexion = bd.obtener_conexion_bd()
         if conexion:
             cursor = conexion.cursor()
-            cursor.execute("SELECT id FROM condiciones_especiales ORDER BY id DESC LIMIT 1")
+            cursor.execute(
+                "SELECT id FROM condiciones_especiales "
+                "WHERE tipo = 'SISMO' AND timestamp_evento >= NOW() - INTERVAL 3 HOUR "
+                "ORDER BY id DESC LIMIT 1"
+            )
             row = cursor.fetchone()
             cursor.close()
             conexion.close()

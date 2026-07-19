@@ -278,16 +278,35 @@ def actualizar_audio_clima():
             else:
                 print(f"[METEORÓLOGO] - {estado.ts()} Guion maestro redactado. Sintetizando voz ({config.VOZ_TTS})...")
                 tts.sintetizar(texto_guion)
-                # Si había intercalado sismo↔clima, este guion combinado lo reemplaza
-                if estado.sismo_intercalando:
-                    estado.sismo_intercalando = False
+                # Gestión de ciclos de reporte de sismo
+                if estado.sismo_activo:
+                    if estado.sismo_intercalando:
+                        estado.sismo_intercalando = False
+
+                    # Persistir el guion de análisis generado en este ciclo de enriquecimiento
+                    # → Se hace en hilo daemon para no bloquear el feed de Icecast/AUX
+                    id_sismo = getattr(estado, "ultimo_id_sismo_bd", None)
+                    if id_sismo and texto_guion:
+                        campos_guion = {
+                            "guion_analisis":  texto_guion,
+                            "prompt_analisis": texto_prompt,
+                            "modelo_ia_usado": modelo_usado,
+                        }
+                        def _persistir_guion_sismo(id_ev, campos):
+                            bd.actualizar_condicion_especial(id_ev, campos)
+                            bd.guardar_historial_condicion_especial(id_ev, campos)
+                        threading.Thread(
+                            target=_persistir_guion_sismo,
+                            args=(id_sismo, campos_guion),
+                            daemon=True,
+                        ).start()
+
                     estado.ciclos_sismo_restantes -= 1
                     if estado.ciclos_sismo_restantes <= 0:
                         estado.sismo_activo = False
                         estado.datos_sismo = None
                         estado.ultimo_id_sismo_bd = None
                         print(f"[SISTEMA] - {estado.ts()} ✅ Evento sísmico finalizado. Volviendo a modo normal.")
-
                     else:
                         print(f"[SISTEMA] - {estado.ts()} ℹ️ Ciclos de enriquecimiento restantes: {estado.ciclos_sismo_restantes}")
         else:
@@ -460,20 +479,18 @@ def iniciar_estacion():
                 # flujo_alerta_sismica() limpia las banderas en su hilo
                 continue
 
-            # 1d. SISMO REAL: bucle de espera con TTS + silencio
-            # Se usa transmitir_silencio() directamente (PCM en memoria) en lugar de
-            # inyectar silencio.wav, para evitar errores si el archivo tiene formato
-            # incompatible (ej. WAVE_FORMAT_EXTENSIBLE, código 65534).
+            # 1d. SISMO REAL: bucle de espera dinámico y responsivo
             print(f"\n[DJ] - {estado.ts()} ⏳ Esperando reporte sísmico...")
             while not estado.sismo_guion_listo:
-                # Reproducir audio de espera si existe
-                if os.path.exists(config.ARCHIVO_SISMO_ESPERA):
+                # Reproducir audio de espera si existe (se interrumpirá inmediatamente si el guion queda listo)
+                if os.path.exists(config.ARCHIVO_SISMO_ESPERA) and not estado.sismo_guion_listo:
                     dj.inyectar_audio_al_stream(config.ARCHIVO_SISMO_ESPERA, es_espera=True, es_alarma=True)
-                # Silencio ×3 — PCM generado en memoria, sin depender de silencio.wav
-                for _ in range(3):
-                    if estado.sismo_guion_listo:
-                        break
-                    dj.transmitir_silencio(2.0, es_alarma=True)
+                
+                # Transmitir silencio PCM (en memoria) en bloques dinámicos
+                # Se interrumpe dentro de la misma función (máx 0.5s de latencia)
+                # en cuanto estado.sismo_guion_listo sea True.
+                if not estado.sismo_guion_listo:
+                    dj.transmitir_silencio(5.0, es_espera=True, es_alarma=True)
 
             # 1e. Reporte sísmico listo → reproducir ×2
             print(f"\n[DJ] - {estado.ts()} 🎙️  Transmitiendo reporte sísmico inmediato (x2)")

@@ -474,10 +474,21 @@ def _bloque_sismo(contexto_sismo: Optional[dict]) -> str:
     prof      = contexto_sismo.get("ssn_profundidad_km")
     hora_ev   = contexto_sismo.get("hora_evento_sassla")
 
+    # Aclaración de fuentes y fallback de magnitud si el SSN está caído
+    nota_fuente_ssn_caido = ""
     if magnitud:
         mag_str = f"magnitud preliminar {magnitud}"
     else:
-        mag_str = "intensidad detectada"
+        usgs_m = contexto_sismo.get("usgs_magnitud")
+        if usgs_m:
+            mag_str = f"magnitud estimada de {usgs_m} (según reportes preliminares internacionales)"
+            nota_fuente_ssn_caido = (
+                "NOTA DE EMERGENCIA: El feed del Servicio Sismológico Nacional (SSN) se encuentra caído o inaccesible "
+                "por problemas técnicos. Por ello, la magnitud y detalles provienen temporalmente del Servicio Geológico de "
+                "los Estados Unidos (USGS). Explica esto brevemente y con lenguaje natural al oyente.\n"
+            )
+        else:
+            mag_str = "intensidad detectada"
 
     prof_str = f" a una profundidad de {prof} km" if prof is not None else ""
     hora_str = f" ocurrido aproximadamente a las {hora_ev.split(' ')[1][:5]} hora local" if hora_ev else ""
@@ -553,14 +564,21 @@ def _bloque_sismo(contexto_sismo: Optional[dict]) -> str:
         nota_actualizacion = ""
     else:
         extras_str = ""
-        nota_actualizacion = (
-            "Añade que 'El reporte detallado con información de agencias sismológicas "
-            "internacionales estará disponible en la próxima actualización'. "
-        )
+        # Si es el último ciclo de enriquecimiento, no prometemos otra actualización
+        if estado.ciclos_sismo_restantes <= 1:
+            nota_actualizacion = (
+                "Añade que 'No se disponen de reportes adicionales de agencias sismológicas internacionales para este evento'."
+            )
+        else:
+            nota_actualizacion = (
+                "Añade que 'El reporte detallado con información de agencias sismológicas "
+                "internacionales estará disponible en la próxima actualización'. "
+            )
 
     return (
         f"CONTEXTO SÍSMICO RECIENTE (CRÍTICO - INYECTAR AL INICIO DEL REPORTE, DESPUÉS DE LA HORA Y FECHA):\n"
         f"Fuente primaria: SSN (Servicio Sismológico Nacional de México — autoridad oficial mexicana en sismología).\n"
+        f"{nota_fuente_ssn_caido}"
         f"Ha ocurrido un sismo{hora_str} de {mag_str} con epicentro en {epicentro}{prof_str}.\n"
         f"{intensidades_str}"
         f"{extras_str}"

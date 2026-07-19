@@ -522,3 +522,54 @@ def actualizar_condicion_especial(evento_id: int, campos_actualizar: dict):
     finally:
         if conexion.is_connected():
             conexion.close()
+
+
+def guardar_historial_condicion_especial(evento_id: int, datos_historial: dict) -> Optional[int]:
+    """
+    Inserta un nuevo registro de actualización/enriquecimiento en historial_condiciones_especiales.
+    """
+    conexion = obtener_conexion_bd()
+    if not conexion:
+        return None
+
+    try:
+        cursor = conexion.cursor()
+        sql = """
+            INSERT INTO historial_condiciones_especiales (
+                condicion_especial_id, subtipo, descripcion, ubicacion, latitud, longitud,
+                datos_fuente_primaria, datos_fuente_secundaria, datos_investigacion,
+                guion_analisis, prompt_analisis, modelo_ia_usado
+            ) VALUES (
+                %(condicion_especial_id)s, %(subtipo)s, %(descripcion)s, %(ubicacion)s, %(latitud)s, %(longitud)s,
+                %(datos_fuente_primaria)s, %(datos_fuente_secundaria)s, %(datos_investigacion)s,
+                %(guion_analisis)s, %(prompt_analisis)s, %(modelo_ia_usado)s
+            )
+        """
+        # Valores por defecto para evitar KeyErrors
+        datos_completo = {
+            "condicion_especial_id":   evento_id,
+            "subtipo":                 None,
+            "descripcion":             None,
+            "ubicacion":               None,
+            "latitud":                 None,
+            "longitud":                None,
+            "datos_fuente_primaria":   None,
+            "datos_fuente_secundaria": None,
+            "datos_investigacion":     None,
+            "guion_analisis":          None,
+            "prompt_analisis":         None,
+            "modelo_ia_usado":         None,
+        }
+        datos_completo.update(datos_historial)
+        cursor.execute(sql, datos_completo)
+        conexion.commit()
+        nuevo_id = cursor.lastrowid
+        print(f"[BD] - {estado.ts()} ✅ Registro de historial de condición especial guardado (ID: {nuevo_id}, Evento Madre: {evento_id})")
+        cursor.close()
+        return nuevo_id
+    except ErrorMySQL as e:
+        print(f"[BD] - {estado.ts()} ⚠️ Error al registrar historial de condición especial: {e}")
+        return None
+    finally:
+        if conexion.is_connected():
+            conexion.close()

@@ -219,7 +219,9 @@ def transmitir_silencio(segundos, es_espera=False, es_alarma=False):
                 break
             if not es_alarma and not es_espera and estado.actualizando_clima:
                 break
-            if es_espera and not estado.actualizando_clima:
+            if es_espera and not es_alarma and not estado.actualizando_clima:
+                break
+            if es_espera and es_alarma and estado.sismo_guion_listo:
                 break
 
             t_inicio          = time.monotonic()
@@ -278,7 +280,9 @@ def inyectar_audio_al_stream(ruta_archivo, es_espera=False, es_alarma=False):
                     break
                 if not es_alarma and not es_espera and estado.actualizando_clima:
                     break
-                if es_espera and not estado.actualizando_clima:
+                if es_espera and not es_alarma and not estado.actualizando_clima:
+                    break
+                if es_espera and es_alarma and estado.sismo_guion_listo:
                     break
 
                 t_inicio = time.monotonic()

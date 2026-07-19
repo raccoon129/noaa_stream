@@ -278,6 +278,8 @@ def consultar_usgs(hora_str):
                     "ubicacion":      f["properties"].get("place"),
                     "tsunami":        f["properties"].get("tsunami"),
                     "profundidad_km": coords[2] if len(coords) > 2 else None,
+                    "latitud":        coords[1] if len(coords) > 1 else None,
+                    "longitud":       coords[0] if len(coords) > 0 else None,
                 }
     except Exception as e:
         print(f"[SISMO] ⚠️ Error USGS: {e}")
