@@ -1,6 +1,11 @@
-# rev 15.1.0
-# rev anterior: rev 15.0.0
+# rev 15.2.0
+# rev anterior: rev 15.1.0
 # Changelog:
+#   15.2.0 — Se elimina el guardado de copias históricas de guiones en
+#            CARPETA_HISTORIAL. El historial queda exclusivamente en la BD
+#            (tabla reportes_climatologicos). Se conserva ARCHIVO_TEXTO
+#            (guion.txt) porque edge-tts lo necesita como entrada en cada
+#            ciclo de síntesis.
 #   15.1.0 — Timeout en subprocess.run() de edge-tts (90 s) y sox (60 s).
 #            Sin timeout, una conexión a Azure TTS que se cuelga bloquea
 #            el hilo de actualizar_audio_clima() indefinidamente, impidiendo
@@ -14,7 +19,6 @@
 
 import os
 import subprocess
-import time
 
 import config
 import estado
@@ -29,11 +33,13 @@ def sintetizar(texto_guion: str) -> bool:
     Convierte el texto del guion en el archivo WAV maestro del stream.
 
     Flujo:
-        1. Escribe el guion en ARCHIVO_TEXTO.
+        1. Escribe el guion en ARCHIVO_TEXTO (requerido por edge-tts).
         2. Llama a edge-tts para generar ARCHIVO_TEMP_MP3.
         3. Convierte con sox a WAV 22050Hz mono → ARCHIVO_TEMP_WAV.
         4. Reemplaza atómicamente ARCHIVO_CLIMA con el nuevo WAV.
-        5. Guarda una copia en CARPETA_HISTORIAL.
+
+    El historial de guiones se persiste en la BD (reportes_climatologicos),
+    no en disco. ARCHIVO_TEXTO se sobreescribe en cada ciclo.
 
     Retorna True si todo el proceso fue exitoso, False en caso contrario.
     """
@@ -79,14 +85,6 @@ def sintetizar(texto_guion: str) -> bool:
 
         # 4. Rotación atómica del archivo maestro
         os.replace(config.ARCHIVO_TEMP_WAV, config.ARCHIVO_CLIMA)
-
-        # 5. Copia al historial
-        if not os.path.exists(config.CARPETA_HISTORIAL):
-            os.makedirs(config.CARPETA_HISTORIAL)
-        timestamp_archivo = time.strftime("%Y%m%d_%H%M%S")
-        ruta_historico = f"{config.CARPETA_HISTORIAL}/guion_{timestamp_archivo}.txt"
-        with open(ruta_historico, "w", encoding="utf-8") as f_hist:
-            f_hist.write(texto_guion)
 
         print(f"[TTS] - {estado.ts()} ✅ ¡Nuevo audio integral listo! Bajando bandera de espera.")
         return True
