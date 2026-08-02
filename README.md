@@ -81,8 +81,7 @@ En cada horario configurado en `config.HORAS_PROGRAMADAS`:
 6. Se construye el prompt de locucion en `prompt.py`.
 7. `ia.py` envia el prompt a los modelos de lenguaje en cascada.
 8. Una vez obtenido el guion, `tts.py` lo procesa con `edge-tts` y `sox`, actualizando de forma atomica el archivo master `clima_actual.wav`.
-9. Se guarda una copia del guion con timestamp en la carpeta historica.
-10. Un hilo secundario inserta todos los metadatos recolectados en sus respectivas tablas MySQL (`reportes_climatologicos`, `datos_conagua`, `datos_owm`, `datos_openmeteo`, `prompt_reporte_climatologico`).
+9. Un hilo secundario inserta todos los metadatos recolectados y el guion final en sus respectivas tablas MySQL (`reportes_climatologicos`, `datos_conagua`, `datos_owm`, `datos_openmeteo`, `prompt_reporte_climatologico`).
 
 ```mermaid
 graph TD
@@ -96,8 +95,7 @@ graph TD
     H --> I["edge-tts: Generar MP3 temporal"]
     I --> J["sox: Convertir MP3 a WAV 22050Hz Mono"]
     J --> K["Reemplazo atomico de clima_actual.wav"]
-    K --> L["Guardar historico de guiones en disco"]
-    L --> M["Persistir datos del reporte en MySQL en segundo plano"]
+    K --> L["Persistir datos del reporte en MySQL en segundo plano"]
 ```
 
 ### 3. Flujo ante Alertas Sismicas
