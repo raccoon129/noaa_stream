@@ -36,7 +36,7 @@ import estado
 
 def _sanitizar_error(mensaje: str) -> str:
     """Enmascara valores sensibles conocidos en mensajes de error antes de persistirlos."""
-    sensibles = [config.OWM_API_KEY, config.GEMINI_API_KEY, config.GROQ_API_KEY]
+    sensibles = [config.OWM_API_KEY, config.GEMINI_API_KEY, config.OPENROUTER_API_KEY]
     resultado = mensaje
     for clave in sensibles:
         if clave and clave in resultado:

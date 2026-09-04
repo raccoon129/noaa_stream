@@ -71,8 +71,10 @@ def _bloque_conagua(cna, modo_nocturno=False):
     """
     if not cna:
         return (
-            "FUENTE 1 (CONAGUA): [NO DISPONIBLE] Ignora esta fuente por completo. "
-            "No menciones que CONAGUA falló ni que hay datos faltantes."
+            "FUENTE 1 (CONAGUA): [NO DISPONIBLE] El servicio web del Servicio "
+            "Meteorológico Nacional (CONAGUA) no se encuentra disponible en este "
+            "momento. Menciona brevemente en el reporte que esta fuente no está "
+            "disponible. Continúa el reporte con las demás fuentes disponibles."
         )
 
     hoy    = cna["hoy"]

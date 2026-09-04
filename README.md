@@ -2,7 +2,7 @@
 
 Sistema automatico de transmision radiofonica en vivo (estilo NOAA Weather Radio) con reportes climatologicos actualizados por inteligencia artificial y alertas sismicas prioritarias interactivas.
 
-El proyecto recolecta informacion meteorologica de multiples APIs públicas y gubernamentales, genera guiones adaptados con una cascada de modelos de lenguaje (Google Gemini y Groq LLM), sintetiza la narracion en audio usando Microsoft Edge TTS y transmite el resultado en bucle intercalado con musica local hacia un servidor Icecast y/o una salida fisica analoga (tarjeta de sonido USB conectada a un transmisor FM de baja potencia). Asimismo, cuenta con un monitor en tiempo real del canal de Telegram de SASSLA para inyectar alarmas y reportes de sismo inmediatos enriquecidos con telemetria global.
+El proyecto recolecta informacion meteorologica de multiples APIs públicas y gubernamentales, genera guiones adaptados con una cascada de modelos de lenguaje (Google Gemini y OpenRouter LLM), sintetiza la narracion en audio usando Microsoft Edge TTS y transmite el resultado en bucle intercalado con musica local hacia un servidor Icecast y/o una salida fisica analoga (tarjeta de sonido USB conectada a un transmisor FM de baja potencia). Asimismo, cuenta con un monitor en tiempo real del canal de Telegram de SASSLA para inyectar alarmas y reportes de sismo inmediatos enriquecidos con telemetria global.
 
 ---
 
@@ -13,7 +13,7 @@ El proyecto recolecta informacion meteorologica de multiples APIs públicas y gu
 * **Alertas Locales RSS**: Monitorea de forma periodica el feed RSS del SSN para notificar sismos locales especificamente en el estado configurado (por ejemplo, Hidalgo), agrupando eventos cercanos en ventanas horarias especificas.
 * **Recoleccion de Datos Meteorologicos**: Consume y normaliza datos provenientes de la Comision Nacional del Agua (CONAGUA/SMN) para el pronostico diario oficial, OpenWeatherMap (OWM) para las condiciones actuales y Open-Meteo AQI para indices de calidad del aire, material particulado (PM10, PM2.5), ozono, monoxido de carbono y profundidad optica de aerosoles (AOD).
 * **Efemerides Astronomicas**: Integra la API del Observatorio Naval de EE. UU. (USNO) para extraer fases lunares detalladas, horarios de transito y visibilidad diurna de la luna, asi como eventos solares importantes (equinoccios, solsticios, perihelio y afelio) con lenguaje de proximidad temporal.
-* **Redundancia Resiliente de IA**: Genera los guiones utilizando una cascada de fallbacks (Gemini Principal -> Gemini Respaldo -> Gemini Extra -> Groq Llama 3) para garantizar el funcionamiento ininterrumpido del sistema ante fallos de conexion, saturacion de APIs o expiracion de cuotas.
+* **Redundancia Resiliente de IA**: Genera los guiones utilizando una cascada de fallbacks (Gemini Principal -> Gemini Respaldo -> Gemini Extra -> OpenRouter) para garantizar el funcionamiento ininterrumpido del sistema ante fallos de conexion, saturacion de APIs o expiracion de cuotas. El razonamiento interno de los modelos de pensamiento se suprime a nivel de API y mediante filtro regex, de modo que nunca aparece en el guion final.
 * **Pipeline de Audio Robusto**: Combina herramientas como `edge-tts`, `sox` (para remuestreo de audio a 22050Hz Mono y normalizacion) y `ffmpeg` para alimentar el stream Icecast con bitrates optimizados para voz e internet de bajo ancho de banda.
 * **Salida Dual Simulcast**: Permite bifurcar el flujo de audio en tiempo real usando `tee` de Unix, manteniendo la transmision Icecast activa en internet mientras envia el audio directo a un dispositivo ALSA USB local con bucles de recuperacion ante desconexiones fisicas.
 * **Base de Datos y Auditoria**: Registra de forma estructurada cada reporte climatologico, datos crudos obtenidos de las APIs, guiones generados, consultas de sismo, errores de ejecucion y fallas de APIs para auditoria tecnica.
@@ -34,7 +34,7 @@ El proyecto recolecta informacion meteorologica de multiples APIs públicas y gu
 * **meteorologo.py**: Recolecta las condiciones actuales de OpenWeatherMap, indices de calidad del aire e indice UV en Open-Meteo, fases lunares y estaciones solares en la USNO. Interpreta valores tecnicos (como CAPE en altitudes elevadas o punto de rocio critico en spread menor a 2 grados) para traducirlos a etiquetas textuales inteligibles.
 * **conagua.py**: Descarga, descomprime y normaliza el pronostico meteorologico diario en formato GZIP de la Comision Nacional del Agua.
 * **prompt.py**: Constructor del prompt climatologico. Estructura las fuentes de informacion y aplica un conjunto estricto de reglas de locucion de radio para evitar que la IA alucine datos, repita frases o mencione codigos tecnicos internos.
-* **ia.py**: Modulo encargado de la inferencia. Implementa la cascada de llamadas API en reversa (Gemini Principal -> Gemini Respaldo -> Gemini Extra -> Groq) para garantizar la entrega de texto.
+* **ia.py**: Modulo encargado de la inferencia. Implementa la cascada de llamadas API (Gemini Principal -> Gemini Respaldo -> Gemini Extra -> OpenRouter) para garantizar la entrega de texto. Suprime el razonamiento interno de modelos de pensamiento mediante `{"reasoning": {"enabled": false}}` y un filtro regex de segunda defensa (`_strip_thinking`).
 * **tts.py**: Administra la sintesis de voz. Llama a `edge-tts` de forma asincrona y transforma el archivo de salida con `sox` al formato WAV maestro de reproduccion (22050 Hz, 16 bits, Mono).
 * **bd.py**: Controlador de persistencia MySQL. Administra las inserciones del reporte, datos meteorologicos especificos por API, auditoria de errores y eventos sismicos en la base de datos.
 * **config.py**: Configuracion del sistema (claves de API, puertos, limites geograficos, nombres de archivo).
@@ -181,7 +181,7 @@ pip install telethon requests mysql-connector-python schedule edge-tts
    ```bash
    mysql -u usuario -p nombre_bd < noaa_streamDB.sql
    ```
-2. **Configuracion**: Copia la plantilla de `CONFIG_SETUP.md` y crea tu archivo local `config.py` en la raiz del proyecto con tus credenciales de base de datos, API keys de OpenWeatherMap, Google Gemini, Groq y credenciales de Telegram para Telethon.
+2. **Configuracion**: Copia la plantilla de `CONFIG_SETUP.md` y crea tu archivo local `config.py` en la raiz del proyecto con tus credenciales de base de datos, API keys de OpenWeatherMap, Google Gemini, OpenRouter y credenciales de Telegram para Telethon.
 3. **Audios Base**: Asegurate de colocar en la raiz de tu proyecto los archivos de audio requeridos por el DJ:
    * `alerta_sismica.wav`: Alarma sismica oficial.
    * `silencio.wav`: Un segundo de silencio utilizado en las transiciones de reproduccion.

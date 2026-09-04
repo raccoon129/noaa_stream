@@ -39,8 +39,8 @@ MODELO_GEMINI          = "gemini-3.5-flash"
 MODELO_GEMINI_RESPALDO = "gemini-3-flash-preview"
 MODELO_GEMINI_EXTRA    = "gemini-3.1-flash-lite"
 
-GROQ_API_KEY = "TU_API_KEY_GROQ"           # Ver sección 3
-MODELO_GROQ  = "llama-3.3-70b-versatile"
+OPENROUTER_API_KEY = "TU_API_KEY_OPENROUTER"  # Ver sección 3
+MODELO_OPENROUTER  = "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free"
 
 # ==========================================
 #   BASE DE DATOS MySQL
@@ -68,7 +68,6 @@ SAMPLE_RATE = 22050
 # ==========================================
 
 CARPETA_MUSICA    = "pistas_musicales"
-CARPETA_HISTORIAL = "historial_guiones"
 ARCHIVO_CLIMA     = "clima_actual.wav"
 ARCHIVO_TEMP_MP3  = "temp_clima.mp3"
 ARCHIVO_TEMP_WAV  = "temp_clima.wav"
@@ -172,7 +171,7 @@ ARCHIVO_SIMULACROS = "simulacros.json"
 
 ---
 
-## Sección 3 — IA generativa (Gemini y Groq)
+## Sección 3 — IA generativa (Gemini y OpenRouter)
 
 ### Google Gemini
 
@@ -196,19 +195,22 @@ ARCHIVO_SIMULACROS = "simulacros.json"
 | `gemini-3.1-flash-lite` | Muy rápido | Media | Segundo respaldo |
 | `gemini-3.1-pro` | Lento | Muy alta | Pruebas de calidad |
 
-### Groq
+### OpenRouter (modelo de emergencia)
 
 | Parámetro | Descripción |
 |---|---|
-| `GROQ_API_KEY` | Clave de la API de Groq (alternativa de baja latencia). |
-| `MODELO_GROQ` | Modelo LLM servido por Groq. |
+| `OPENROUTER_API_KEY` | Clave de la API de OpenRouter. Se usa solo si **todos** los modelos Gemini fallan. |
+| `MODELO_OPENROUTER` | Modelo LLM servido por OpenRouter. |
 
 **Cómo obtener la clave:**
-1. Regístrate en [console.groq.com](https://console.groq.com/keys).
+1. Regístrate en [openrouter.ai](https://openrouter.ai/settings/keys).
 2. Crea una API Key y cópiala.
 
 > [!TIP]
-> Groq es útil como respaldo si Gemini experimenta latencia alta; ofrece inferencia muy rápida en hardware dedicado.
+> OpenRouter ofrece acceso a docenas de modelos de distintos proveedores (Meta, NVIDIA, Mistral, etc.), incluyendo opciones gratuitas. El modelo predeterminado (`nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free`) es gratuito y soporta razonamiento interno.
+
+> [!NOTE]
+> El razonamiento interno (`<think>…</think>`) se desactiva vía API (`"reasoning": {"enabled": false}`) para que el pensamiento del modelo nunca aparezca en el guion generado. El módulo `ia.py` también aplica un filtro regex como segunda línea de defensa.
 
 ---
 
