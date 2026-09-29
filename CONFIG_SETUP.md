@@ -39,8 +39,9 @@ MODELO_GEMINI          = "gemini-3.5-flash"
 MODELO_GEMINI_RESPALDO = "gemini-3-flash-preview"
 MODELO_GEMINI_EXTRA    = "gemini-3.1-flash-lite"
 
-OPENROUTER_API_KEY = "TU_API_KEY_OPENROUTER"  # Ver sección 3
-MODELO_OPENROUTER  = "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free"
+OPENROUTER_API_KEY        = "TU_API_KEY_OPENROUTER"  # Ver sección 3
+MODELO_OPENROUTER          = "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free"
+MODELO_OPENROUTER_RESPALDO = "mistralai/mistral-small-3.1-24b-instruct:free"  # Dejar vacío ("") para deshabilitar
 
 # ==========================================
 #   BASE DE DATOS MySQL
@@ -195,19 +196,26 @@ ARCHIVO_SIMULACROS = "simulacros.json"
 | `gemini-3.1-flash-lite` | Muy rápido | Media | Segundo respaldo |
 | `gemini-3.1-pro` | Lento | Muy alta | Pruebas de calidad |
 
-### OpenRouter (modelo de emergencia)
+### OpenRouter (modelos de emergencia)
 
 | Parámetro | Descripción |
 |---|---|
 | `OPENROUTER_API_KEY` | Clave de la API de OpenRouter. Se usa solo si **todos** los modelos Gemini fallan. |
-| `MODELO_OPENROUTER` | Modelo LLM servido por OpenRouter. |
+| `MODELO_OPENROUTER` | Modelo principal de emergencia servido por OpenRouter. |
+| `MODELO_OPENROUTER_RESPALDO` | Modelo de reserva dentro de OpenRouter. Si el principal falla, se intenta con este antes de declarar fallo total. Dejar como cadena vacía (`""`) para deshabilitar. |
+
+**Cascada de fallback completa:**
+```
+Gemini principal → Gemini respaldo → Gemini extra (opt.)
+  → OpenRouter principal → OpenRouter respaldo (opt.)
+```
 
 **Cómo obtener la clave:**
 1. Regístrate en [openrouter.ai](https://openrouter.ai/settings/keys).
 2. Crea una API Key y cópiala.
 
 > [!TIP]
-> OpenRouter ofrece acceso a docenas de modelos de distintos proveedores (Meta, NVIDIA, Mistral, etc.), incluyendo opciones gratuitas. El modelo predeterminado (`nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free`) es gratuito y soporta razonamiento interno.
+> OpenRouter ofrece acceso a docenas de modelos de distintos proveedores (Meta, NVIDIA, Mistral, etc.), incluyendo opciones gratuitas. El modelo predeterminado (`nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free`) y el de respaldo (`mistralai/mistral-small-3.1-24b-instruct:free`) son ambos gratuitos. Puedes explorar más modelos en el [catálogo de OpenRouter](https://openrouter.ai/models?q=:free).
 
 > [!NOTE]
 > El razonamiento interno (`<think>…</think>`) se desactiva vía API (`"reasoning": {"enabled": false}`) para que el pensamiento del modelo nunca aparezca en el guion generado. El módulo `ia.py` también aplica un filtro regex como segunda línea de defensa.
