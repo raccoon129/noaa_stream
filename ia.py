@@ -104,9 +104,12 @@ def _generar_openrouter(prompt, nivel=0):
 
     _OR_NIVEL_LABELS = {0: "principal", 1: "respaldo"}
 
-    def _siguiente_openrouter():
-        # type: () -> Tuple[Optional[str], str, Optional[str]]
-        """Escala al siguiente nivel de OpenRouter o declara fallo total."""
+    def _siguiente_openrouter(msg_tecnico=""):
+        # type: (str) -> Tuple[Optional[str], str, Optional[str]]
+        """Escala al siguiente nivel de OpenRouter o declara fallo total.
+        msg_tecnico: mensaje de error ya sanitizado (sin API key ni datos sensibles)
+        que se adjunta al mensaje de fallo total para facilitar el diagnóstico.
+        """
         siguiente = nivel + 1
         modelo_siguiente = _modelo_openrouter_para_nivel(siguiente)
         if modelo_siguiente:
@@ -116,8 +119,11 @@ def _generar_openrouter(prompt, nivel=0):
                 f"{label} ({modelo_siguiente})..."
             )
             return _generar_openrouter(prompt, nivel=siguiente)
-        print(f"[ERROR] - {estado.ts()} 🚨 Todos los modelos OpenRouter fallaron. Sin fallback adicional.")
-        return None, modelo_actual, "Todos los modelos OpenRouter fallaron."
+        msg_final = "Todos los modelos OpenRouter fallaron."
+        if msg_tecnico:
+            msg_final = "{0} Último error: {1}".format(msg_final, msg_tecnico)
+        print(f"[ERROR] - {estado.ts()} 🚨 {msg_final}")
+        return None, modelo_actual, msg_final
 
     try:
         respuesta = requests.post(url, headers=headers, json=payload, timeout=60)
@@ -137,11 +143,12 @@ def _generar_openrouter(prompt, nivel=0):
                 f"[ERROR] - {estado.ts()} OpenRouter ({modelo_actual}) "
                 f"devolvió código {respuesta.status_code}"
             )
-            return _siguiente_openrouter()
+            return _siguiente_openrouter(msg)
     except Exception as e:
         msg = _sanitizar_error(str(e))
         print(f"[ERROR] - {estado.ts()} Falló la petición a OpenRouter ({modelo_actual}): {e}")
-        return _siguiente_openrouter()
+        return _siguiente_openrouter(msg)
+
 
 
 # ==========================================
