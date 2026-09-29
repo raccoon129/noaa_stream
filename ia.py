@@ -1,6 +1,10 @@
-# rev 15.3.0
-# rev anterior: rev 15.2.0
+# rev 15.4.0
+# rev anterior: rev 15.3.0
 # Changelog:
+#   15.4.0 — _generar_openrouter() refactorizada con soporte de nivel (0/1).
+#            Si el modelo principal de OpenRouter falla, se intenta automáticamente
+#            con MODELO_OPENROUTER_RESPALDO antes de declarar fallo total.
+#            Sigue el mismo patrón de cascada que _generar_gemini().
 #   15.3.0 — Modelo de emergencia migrado de Groq a OpenRouter.
 #            _generar_groq() reemplazado por _generar_openrouter().
 #            El razonamiento interno se desactiva vía {"reasoning": {"enabled": False}}
@@ -55,21 +59,40 @@ def _strip_thinking(texto):
 #   MODELO DE EMERGENCIA: OPENROUTER
 # ==========================================
 
-def _generar_openrouter(prompt):
-    # type: (str) -> Tuple[Optional[str], str, Optional[str]]
+def _modelo_openrouter_para_nivel(nivel):
+    # type: (int) -> Optional[str]
+    """Retorna el nombre del modelo OpenRouter para el nivel dado, o None si no aplica."""
+    if nivel == 0:
+        return config.MODELO_OPENROUTER
+    if nivel == 1:
+        return getattr(config, "MODELO_OPENROUTER_RESPALDO", "") or None
+    return None
+
+
+def _generar_openrouter(prompt, nivel=0):
+    # type: (str, int) -> Tuple[Optional[str], str, Optional[str]]
     """
     Genera el guion vía OpenRouter (API compatible con OpenAI).
+    Cascada por nivel: 0 (principal) → 1 (respaldo, si MODELO_OPENROUTER_RESPALDO está definido).
     Se desactiva el reasoning explícitamente para que el pensamiento interno
     del modelo no llegue ni al campo 'content' ni a 'reasoning_details'.
     Retorna (texto_guion, modelo_usado, mensaje_error).
     """
+    modelo_actual = _modelo_openrouter_para_nivel(nivel)
+
+    # Si el nivel solicitado no tiene modelo configurado, declarar fallo total
+    if not modelo_actual:
+        msg = "No hay más modelos OpenRouter configurados (nivel {0} vacío).".format(nivel)
+        print(f"[ERROR] - {estado.ts()} 🚨 {msg}")
+        return None, "openrouter-sin-modelo", msg
+
     url     = "https://openrouter.ai/api/v1/chat/completions"
     headers = {
         "Authorization": "Bearer {0}".format(config.OPENROUTER_API_KEY),
         "Content-Type":  "application/json",
     }
     payload = {
-        "model":    config.MODELO_OPENROUTER,
+        "model":    modelo_actual,
         "messages": [{"role": "user", "content": prompt}],
         # Desactivar el razonamiento: el thinking no debe aparecer en el
         # contenido retornado ni almacenarse en la base de datos.
@@ -78,28 +101,47 @@ def _generar_openrouter(prompt):
         "max_completion_tokens": 4096,
         "top_p":                 0.95,
     }
+
+    _OR_NIVEL_LABELS = {0: "principal", 1: "respaldo"}
+
+    def _siguiente_openrouter():
+        # type: () -> Tuple[Optional[str], str, Optional[str]]
+        """Escala al siguiente nivel de OpenRouter o declara fallo total."""
+        siguiente = nivel + 1
+        modelo_siguiente = _modelo_openrouter_para_nivel(siguiente)
+        if modelo_siguiente:
+            label = _OR_NIVEL_LABELS.get(siguiente, str(siguiente))
+            print(
+                f"[SISTEMA] - {estado.ts()} ⚠️  Activando OpenRouter "
+                f"{label} ({modelo_siguiente})..."
+            )
+            return _generar_openrouter(prompt, nivel=siguiente)
+        print(f"[ERROR] - {estado.ts()} 🚨 Todos los modelos OpenRouter fallaron. Sin fallback adicional.")
+        return None, modelo_actual, "Todos los modelos OpenRouter fallaron."
+
     try:
         respuesta = requests.post(url, headers=headers, json=payload, timeout=60)
         if respuesta.status_code == 200:
             texto = _strip_thinking(
                 respuesta.json()["choices"][0]["message"].get("content") or ""
             )
+            label = _OR_NIVEL_LABELS.get(nivel, str(nivel))
             print(
                 f"[IA] - {estado.ts()} ✅ Guion generado con éxito por el modelo de "
-                f"EMERGENCIA (OpenRouter): {config.MODELO_OPENROUTER}"
+                f"EMERGENCIA OpenRouter {label}: {modelo_actual}"
             )
-            return texto, config.MODELO_OPENROUTER, None
+            return texto, modelo_actual, None
         else:
             msg = _sanitizar_error(f"HTTP {respuesta.status_code}: {respuesta.text[:300]}")
             print(
-                f"[ERROR] - {estado.ts()} OpenRouter ({config.MODELO_OPENROUTER}) "
+                f"[ERROR] - {estado.ts()} OpenRouter ({modelo_actual}) "
                 f"devolvió código {respuesta.status_code}"
             )
-            return None, config.MODELO_OPENROUTER, msg
+            return _siguiente_openrouter()
     except Exception as e:
         msg = _sanitizar_error(str(e))
-        print(f"[ERROR] - {estado.ts()} Falló la petición a OpenRouter ({config.MODELO_OPENROUTER}): {e}")
-        return None, config.MODELO_OPENROUTER, msg
+        print(f"[ERROR] - {estado.ts()} Falló la petición a OpenRouter ({modelo_actual}): {e}")
+        return _siguiente_openrouter()
 
 
 # ==========================================
@@ -196,10 +238,14 @@ def generar_guion(prompt):
     """
     Genera el guion meteorológico a partir del prompt dado.
     Ejecuta la cascada completa:
-        Gemini principal → Gemini respaldo → Gemini extra (si configurado) → OpenRouter.
+        Gemini principal → Gemini respaldo → Gemini extra (si configurado)
+        → OpenRouter principal → OpenRouter respaldo (si configurado).
 
     El paso 'Gemini extra' se activa solo si MODELO_GEMINI_EXTRA está definido
     y no vacío en config.py. De lo contrario se salta sin afectar el resto.
+
+    El paso 'OpenRouter respaldo' se activa solo si MODELO_OPENROUTER_RESPALDO
+    está definido y no vacío en config.py.
 
     Retorna (texto_guion, modelo_usado, mensaje_error).
     En éxito: (str, str, None).
