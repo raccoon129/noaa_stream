@@ -127,16 +127,21 @@ def _construir_comando_stream():
                 rate=config.AUX_SAMPLE_RATE_SALIDA,
             )
         )
-        # Bucle de resiliencia: si la tarjeta USB se desconecta, aplay
-        # se reinicia automáticamente cada 2 s sin afectar la rama Icecast
+        # Bucle de resiliencia NO BLOQUEANTE: si aplay falla (tarjeta ausente,
+        # ocupada, desconectada) se drena la entrada durante 2 s en lugar de
+        # dormir. Si nadie lee el pipe de esta rama, tee se bloquea y deja sin
+        # datos a ffmpeg (Icecast cae). cat termina con código 124 (timeout)
+        # => reintentar; con EOF (código 0) => salir, evitando bucles huérfanos.
         rama_aux = (
-            "{sox_aux} | while true; do {aplay}; sleep 2; done".format(
+            "{sox_aux} | while true; do {aplay} 2>/dev/null; "
+            "timeout 2 cat >/dev/null; [ $? -eq 124 ] || break; done".format(
                 sox_aux=sox_a_pcm_aux,
                 aplay=aplay_aux,
             )
         )
+        # --output-error=warn-nopipe: tee no muere si la rama AUX se cierra
         return (
-            "tee >({rama_aux}) | "
+            "tee --output-error=warn-nopipe >({rama_aux}) | "
             "{sox_wav} | "
             "{ffmpeg}".format(
                 rama_aux=rama_aux,
