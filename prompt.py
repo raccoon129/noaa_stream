@@ -1,6 +1,19 @@
-# rev 17.3.0
-# rev anterior: rev 17.2.0
+# rev 17.4.0
+# rev anterior: rev 17.3.0
 # Changelog:
+#   17.4.0 — Ajustes derivados de evaluar 30 días de historial CONAGUA vs OWM:
+#            · _bloque_conagua(): ya no afirma "sin precipitación" cuando prob_lluvia=0
+#              (en 12 de 17 días con lluvia observada el pronóstico de "hoy" marcó 0 %).
+#              Con prob=0 la línea se omite (neutral); con prob>0 se conserva. Igual
+#              para mañana en modo nocturno.
+#            · Regla 11: se reporta la MAYOR ráfaga entre FUENTE 1, 2 y 4 (las de
+#              CONAGUA quedaron en promedio 11 km/h por debajo de las medidas). Incluye
+#              la línea de ráfagas de FUENTE 4 (meteorologo 17.3.0).
+#            · Regla 15: las alertas de helada solo provienen de la isoterma de la
+#              FUENTE 4; no se usa la mínima de CONAGUA (sesgo medio -4 °C).
+#            · Sin datos vigentes de CONAGUA (None, p. ej. registro de otra fecha): se
+#              omite la fuente sin avisar al oyente y se omite la perspectiva de
+#              mañana; ya no se inventan valores (regla 8).
 #   17.3.0 — Se añade FUENTE 7 (Estaciones solares USNO): _bloque_estaciones()
 #            inyecta el evento solar cercano (±VENTANA_EVENTO_SOLAR_DIAS) al prompt.
 #            Incluye solsticios, equinoccios, perihelio y afelio con lenguaje de
@@ -71,10 +84,11 @@ def _bloque_conagua(cna, modo_nocturno=False):
     """
     if not cna:
         return (
-            "FUENTE 1 (CONAGUA): [NO DISPONIBLE] El servicio web del Servicio "
-            "Meteorológico Nacional (CONAGUA) no se encuentra disponible en este "
-            "momento. Menciona brevemente en el reporte que esta fuente no está "
-            "disponible. Continúa el reporte con las demás fuentes disponibles."
+            "FUENTE 1 (CONAGUA): [SIN DATOS VIGENTES] No hay pronóstico oficial "
+            "vigente en este ciclo. NO menciones esta fuente ni su ausencia en el "
+            "reporte. No inventes temperaturas máximas o mínimas, probabilidades de "
+            "lluvia ni perspectiva de mañana. Construye el reporte únicamente con "
+            "las demás fuentes disponibles."
         )
 
     hoy    = cna["hoy"]
@@ -82,20 +96,23 @@ def _bloque_conagua(cna, modo_nocturno=False):
 
     # Línea de precipitación de HOY:
     # probprec y prec son acumulados del día completo (no del momento de consulta).
-    # Si probprec=0, prec no tiene valor narrativo (es la cantidad condicional si
-    # lloviera, pero la probabilidad es nula). Se suprime para evitar confusión.
+    # Si probprec=0 la línea se omite (ver nota en la rama else); la lluvia real
+    # la cubren OWM y FUENTE 4.
     if (hoy.get("prob_lluvia") or 0) > 0:
         linea_prec_hoy = (
             "- Probabilidad de precipitación para el día: {0}% "
-            "— Acumulado proyectado: {1} mm".format(
+            "— Acumulado proyectado: {1} mm\n".format(
                 hoy["prob_lluvia"], hoy["precipitacion"]
             )
         )
     else:
-        linea_prec_hoy = "- Sin precipitación proyectada para el día (probabilidad: 0%)"
+        # Con probabilidad 0 se omite la línea: el histórico muestra que el pronóstico
+        # de "hoy" marca 0 % incluso en días con lluvia, por lo que afirmar "sin
+        # precipitación" no es objetivo. La lluvia real la cubren OWM y FUENTE 4.
+        linea_prec_hoy = ""
 
     # Perspectiva de mañana en modo nocturno:
-    # Mismo criterio para prec — se suprime cuando prob_lluvia=0.
+    # Mismo criterio para prec — se omite cuando prob_lluvia=0 (sin afirmar ausencia).
     if manana and modo_nocturno:
         man_prob   = manana.get("prob_lluvia", 0) or 0
         if man_prob > 0:
@@ -105,7 +122,7 @@ def _bloque_conagua(cna, modo_nocturno=False):
                 )
             )
         else:
-            linea_prec_man = "  Sin precipitación proyectada (probabilidad: 0%)\n"
+            linea_prec_man = ""
 
         perspectiva = (
             "PRONÓSTICO COMPLETO PARA MAÑANA (MODO NOCTURNO — EXPANDE ESTE BLOQUE):\n"
@@ -122,8 +139,10 @@ def _bloque_conagua(cna, modo_nocturno=False):
         )
     elif manana:
         perspectiva = (
-            "Cielo {0} con una máxima de {1}°C y mínima de {2}°C.".format(
-                manana["condicion"], manana["temp_max"], manana["temp_min"]
+            "{0} con una máxima de {1}°C y mínima de {2}°C.".format(
+                (manana["condicion"] if str(manana["condicion"]).lower().startswith("cielo")
+                 else "Cielo " + str(manana["condicion"])),
+                manana["temp_max"], manana["temp_min"]
             )
         )
     else:
@@ -133,7 +152,7 @@ def _bloque_conagua(cna, modo_nocturno=False):
         "FUENTE 1 (CONAGUA/Comisión Nacional del Agua - Pronóstico Oficial PRIORITARIO — datos del día completo):\n"
         "- Condición del día: {0} | Temp. Max: {1}°C | Temp. Min: {2}°C\n"
         "- Viento: Dirección {3} a {4} km/h con ráfagas de {5} km/h\n"
-        "{6}\n"
+        "{6}"
         "- Perspectiva para mañana: {7}"
     ).format(
         hoy["condicion"], hoy["temp_max"], hoy["temp_min"],
@@ -309,12 +328,25 @@ def _bloque_forecast(fc):
         )
 
     if fc.get("viento_relevante"):
-        lineas.append(
-            "- El viento se intensificará en las próximas horas, "
-            "alcanzando {0} km/h alrededor de las {1:02d}:00 horas.".format(
-                fc["viento_max"], fc["hora_viento_max"]
+        # El criterio que disparó la relevancia determina el texto:
+        # incremento del viento medio y/o ráfagas fuertes (>= 30 km/h).
+        sube_medio = (fc["viento_max"] - fc["viento_actual"]) >= 8
+        rafaga     = fc.get("rafaga_max")
+        hay_rafaga = rafaga is not None and rafaga >= 30
+        if sube_medio:
+            lineas.append(
+                "- El viento se intensificará en las próximas horas, "
+                "alcanzando {0} km/h alrededor de las {1:02d}:00 horas.".format(
+                    fc["viento_max"], fc["hora_viento_max"]
+                )
             )
-        )
+        if hay_rafaga:
+            lineas.append(
+                "- Se esperan ráfagas de hasta {0} km/h alrededor de las "
+                "{1:02d}:00 horas (viento medio máximo en la ventana: {2} km/h).".format(
+                    rafaga, fc["hora_rafaga_max"], fc["viento_max"]
+                )
+            )
 
     if fc.get("cape_relevante"):
         lineas.append(
@@ -792,7 +824,7 @@ def construir_prompt(cna, owm, aqi, forecast=None, contexto_sismo=None,
         "la noche, o gases bajos), IGNÓRALOS por completo. Para el caso de índice UV, usa de "
         "referencia la escala a continuación: Bajo (0-2), Moderado (3-5), Alto (6-7), "
         "Muy Alto (8-10), Extremo (11+). Considera la condición climática para hacerlo más preciso.\n"
-        "8. Finaliza el reporte ofreciendo la perspectiva de mañana (proporcionada en la Fuente 1). "
+        "8. Finaliza el reporte ofreciendo la perspectiva de mañana (proporcionada en la Fuente 1; si la Fuente 1 no tiene datos vigentes, omite la perspectiva de mañana sin inventarla). "
         "Al final menciona \"este es un reporte en bucle\".\n"
         "9. NO uses corchetes, ni corchetes angulares, ni marcadores de posición. "
         "Las horas menciónalas como texto para locución "
@@ -810,9 +842,13 @@ def construir_prompt(cna, owm, aqi, forecast=None, contexto_sismo=None,
         " la dirección cardinal ('del noreste', 'del sur', etc.). Usa la dirección para"
         " enriquecer el contexto (ej. vientos del norte indican masa de aire frío;"
         " del este/noreste pueden traer humedad del Golfo).\n"
-        "  • Ráfagas proyectadas del día: usa FUENTE 1 (CONAGUA). Si las ráfagas del día"
-        " son notablemente superiores al viento actual de la FUENTE 2, menciona que se"
-        " esperan ráfagas de hasta X km/h durante el día.\n"
+        "  • Ráfagas: reporta la MAYOR ráfaga disponible entre FUENTE 1 (promedio proyectado"
+        " del día; las ráfagas de CONAGUA suelen resultar inferiores a las medidas), FUENTE 2"
+        " (ráfaga actual medida) y FUENTE 4 (ráfaga proyectada en las próximas horas, si aparece)."
+        " No cites la ráfaga menor de CONAGUA si otra fuente indica una mayor. Menciónalas solo"
+        " si son notablemente superiores al viento medio actual de la FUENTE 2 o si la FUENTE 4"
+        " las señala; en ese caso indica 'ráfagas de hasta X km/h' y, si la FUENTE 4 da la hora,"
+        " cuándo se esperan.\n"
         "  • Tendencia a corto plazo: si la FUENTE 4 indica que el viento se intensificará"
         " más de 8 km/h en las próximas horas, añade una oración de tendencia."
         " Si no hay cambio significativo proyectado, no lo menciones.\n"
@@ -852,7 +888,9 @@ def construir_prompt(cna, owm, aqi, forecast=None, contexto_sismo=None,
         "cultivos y carreteras. El campo 'Isoterma (valor técnico)' de la "
         "FUENTE 4 contiene la altitud real de la isoterma de congelación en metros s.n.m.; "
         "úsalo para enriquecer la narrativa de helada (p. ej. señalar qué tan próxima está la "
-        "isoterma a la altitud de la localidad ~{altitud_m} m s.n.m.). Mencionalo siempre en lenguaje accesible.\n\n"
+        "isoterma a la altitud de la localidad ~{altitud_m} m s.n.m.). Mencionalo siempre en lenguaje accesible. "
+        "Las alertas de helada provienen ÚNICAMENTE de la isoterma de la FUENTE 4: no emitas alertas "
+        "de helada ni de frío extremo a partir de la temperatura mínima de la FUENTE 1 (CONAGUA).\n\n"
 
         "16. Fase lunar y astronomía solar (FUENTE 5): Si la FUENTE 5 está disponible, incorpórala de forma natural:\n"
         "   - FASE LUNAR DE NOCHE: Menciona la fase lunar integrada a las condiciones nocturnas, "

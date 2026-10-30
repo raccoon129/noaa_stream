@@ -1,6 +1,12 @@
-# rev 16.1.0
-# rev anterior: rev 16.0.0
+# rev 16.2.0
+# rev anterior: rev 16.1.0
 # Changelog:
+#   16.2.0 — Selección de 'hoy' y 'mañana' por fecha local (campo dloc, formato
+#            YYYYMMDDTHH) en lugar de por ndia 0/1. De 00:00 a ~06:00 el feed
+#            aún trae como ndia=0 el día anterior (verificado 2026-10-27), por
+#            lo que 'hoy' y 'mañana' salían desfasados un día. Si no existe un
+#            registro con la fecha de hoy se retorna None (sin datos) antes que
+#            reportar un pronóstico de otra fecha.
 #   16.1.0 — Se eliminan obtener_pronostico_horario() y funciones auxiliares
 #            de method=3 (CONAGUA horario): demasiado pesadas para el hardware.
 #            Solo permanece obtener_pronostico() (method=1, pronóstico diario).
@@ -10,6 +16,7 @@
 #   15.1.0 — Anotaciones de tipo migradas a Optional/Tuple de typing.
 #   15.0.0 — Módulo refactorizado.
 
+import datetime
 import gzip
 import io
 import json
@@ -58,10 +65,7 @@ def _obtener_datos_crudos(
         pronostico = []
         for reporte in datos:
             if reporte.get("nmun", "").lower() == nombre_municipio.lower():
-                if reporte.get("ndia") in ("0", "1"):
-                    pronostico.append(reporte)
-                if len(pronostico) == 2:
-                    break
+                pronostico.append(reporte)
 
         return pronostico if pronostico else None
 
@@ -78,6 +82,14 @@ def _num(valor):
     """Convierte un valor a float; retorna None si no es convertible."""
     try:
         return float(valor)
+    except (TypeError, ValueError):
+        return None
+
+
+def _fecha_dloc(dloc):
+    """Convierte 'YYYYMMDDTHH' a datetime.date; retorna None si no es válido."""
+    try:
+        return datetime.datetime.strptime(str(dloc)[:8], "%Y%m%d").date()
     except (TypeError, ValueError):
         return None
 
@@ -127,8 +139,30 @@ def obtener_pronostico(
     if not registros:
         return None
 
-    hoy    = _extraer_dia(registros[0])
-    manana = _extraer_dia(registros[1]) if len(registros) > 1 else None
+    # Selección por fecha local, no por posición (ndia): de madrugada el feed
+    # todavía publica el día anterior como ndia=0.
+    tz_mx = datetime.timezone(datetime.timedelta(hours=-6))
+    fecha_hoy    = datetime.datetime.now(tz_mx).date()
+    fecha_manana = fecha_hoy + datetime.timedelta(days=1)
+
+    por_fecha = {}
+    for reg in registros:
+        f = _fecha_dloc(reg.get("dloc"))
+        if f is not None:
+            por_fecha[f] = reg
+
+    reg_hoy    = por_fecha.get(fecha_hoy)
+    reg_manana = por_fecha.get(fecha_manana)
+
+    if reg_hoy is None:
+        print(
+            f"[CONAGUA] - {estado.ts()} ⚠️ Sin registro para hoy ({fecha_hoy}); "
+            f"fechas disponibles: {sorted(str(f) for f in por_fecha)}"
+        )
+        return None
+
+    hoy    = _extraer_dia(reg_hoy)
+    manana = _extraer_dia(reg_manana) if reg_manana else None
 
     return {"hoy": hoy, "manana": manana}
 

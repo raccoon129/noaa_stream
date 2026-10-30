@@ -1,6 +1,16 @@
-# rev 17.1.0
-# rev anterior: rev 17.0.0
+# rev 17.3.0
+# rev anterior: rev 17.2.0
 # Changelog:
+#   17.3.0 — Ráfagas en la relevancia del viento: se añade windgusts_10m al request
+#            del forecast (mismo endpoint). viento_relevante = incremento del
+#            viento medio >= 8 km/h O ráfaga máxima de la ventana >= 30 km/h
+#            (_RAFAGA_MIN_KMH). Nuevos campos: rafaga_max, hora_rafaga_max.
+#            Antes ráfagas de ~36 km/h con viento medio estable no se mencionaban.
+#   17.2.0 — Corrección de falsas alarmas de lluvia: lluvia_relevante ahora exige
+#            prob_lluvia_max >= 20 % Y prec_total >= 0.2 mm en la ventana. Antes
+#            bastaba la probabilidad, y producía avisos de lluvia con 0.0 mm
+#            proyectados (verificado en vivo 2026-10-27). Constantes
+#            _LLUVIA_PROB_MIN y _LLUVIA_PREC_MIN_MM.
 #   17.1.0 — Se añaden obtener_estaciones_solares() y obtener_evento_solar_cercano().
 #            Consultan la API USNO /api/seasons una vez al arrancar (caché por año
 #            en estado.estaciones_solares). Devuelven solsticios, equinoccios,
@@ -499,7 +509,7 @@ def obtener_forecast_horario():
         f"https://api.open-meteo.com/v1/forecast"
         f"?latitude={config.LATITUD}&longitude={config.LONGITUD}"
         f"&hourly=precipitation_probability,precipitation,windspeed_10m,cape"
-        f",dewpoint_2m,freezing_level_height,shortwave_radiation"
+        f",dewpoint_2m,freezing_level_height,shortwave_radiation,windgusts_10m"
         f"&forecast_days=2"
         f"&timezone=America%2FMexico_City"
     )
@@ -756,6 +766,13 @@ def _etiqueta_helada(freezing_level_m, altitud_estacion_m=None):
 # noche, pre-amanecer y primera hora post-amanecer.
 _HORAS_ROCIO_RELEVANTE = set(range(20, 24)) | set(range(0, 10))  # 20:00-09:59
 
+# Umbrales de relevancia de lluvia en la ventana de 6 h (ambos deben cumplirse)
+_LLUVIA_PROB_MIN    = 20    # probabilidad máxima (%)
+_LLUVIA_PREC_MIN_MM = 0.2   # precipitación total proyectada (mm)
+
+# Ráfaga máxima proyectada (km/h) a partir de la cual el viento se considera relevante
+_RAFAGA_MIN_KMH     = 30
+
 
 def _extraer_forecast(datos_fc, hora_actual):
     """
@@ -781,8 +798,11 @@ def _extraer_forecast(datos_fc, hora_actual):
                               500–1499 J/kg  → convección moderada
                               1500–2499 J/kg → convección fuerte
                               ≥2500 J/kg     → convección severa
-        lluvia_relevante  — True si prob_lluvia_max >= 20
+        lluvia_relevante  — True si prob_lluvia_max >= 20 Y prec_total >= 0.2 mm
+        rafaga_max        — ráfaga máxima proyectada en la ventana (km/h), o None
+        hora_rafaga_max   — hora (int, 0-23) de la ráfaga máxima
         viento_relevante  — True si (viento_max - viento_actual) >= 8 km/h
+                            O rafaga_max >= 30 km/h
         cape_relevante    — True si cape_etiqueta no es None (cape_max >= 500 Y lluvia_relevante)
         dew_point         — punto de rocío promedio en la ventana (°C), o None
         freezing_level_m  — isoterma 0°C mínima en la ventana (m), o None
@@ -797,6 +817,7 @@ def _extraer_forecast(datos_fc, hora_actual):
     dewpts    = horario.get("dewpoint_2m", [])
     freezing  = horario.get("freezing_level_height", [])
     shortwave = horario.get("shortwave_radiation", [])
+    rafagas   = horario.get("windgusts_10m", [])
 
     # Identificar el índice de la hora actual en la serie
     fecha_hoy     = datetime.datetime.now().strftime("%Y-%m-%d")
@@ -822,6 +843,7 @@ def _extraer_forecast(datos_fc, hora_actual):
     ventana_probs    = probs[indice_actual:fin]
     ventana_precs    = precs[indice_actual:fin]
     ventana_vientos  = vientos[indice_actual:fin]
+    ventana_rafagas  = rafagas[indice_actual:fin] if rafagas else []
     ventana_capes    = capes[indice_actual:fin]
     ventana_tiempos  = tiempos[indice_actual:fin]
     ventana_dewpts   = dewpts[indice_actual:fin]   if dewpts   else []
@@ -851,8 +873,21 @@ def _extraer_forecast(datos_fc, hora_actual):
     idx_cape  = ventana_capes.index(cape_max) if ventana_capes else 0
     hora_cape = int(ventana_tiempos[idx_cape][11:13])
 
-    lluvia_relevante = prob_max >= 20
-    viento_relevante = (viento_max - viento_actual) >= 8
+    # Probabilidad Y precipitación proyectada: evita falsas alarmas cuando el
+    # modelo da probabilidad residual pero 0 mm acumulados en la ventana.
+    lluvia_relevante = (prob_max >= _LLUVIA_PROB_MIN) and (prec_total >= _LLUVIA_PREC_MIN_MM)
+    # --- Ráfagas ---
+    rafaga_max      = None
+    hora_rafaga_max = None
+    validas = [r for r in ventana_rafagas if r is not None]
+    if validas:
+        rafaga_max      = round(max(validas), 1)
+        hora_rafaga_max = int(ventana_tiempos[ventana_rafagas.index(max(validas))][11:13])
+
+    viento_relevante = (
+        (viento_max - viento_actual) >= 8
+        or (rafaga_max is not None and rafaga_max >= _RAFAGA_MIN_KMH)
+    )
 
     # ---- Etiqueta CAPE calibrada por altitud (config.ALTITUD_M) ----
     # La escala NWS/NOAA estándar está diseñada para nivel del mar. A la
@@ -914,6 +949,8 @@ def _extraer_forecast(datos_fc, hora_actual):
         "viento_actual":    viento_actual,
         "viento_max":       viento_max,
         "hora_viento_max":  hora_viento,
+        "rafaga_max":       rafaga_max,
+        "hora_rafaga_max":  hora_rafaga_max,
         "cape_max":         cape_max,
         "hora_cape_max":    hora_cape,
         "cape_etiqueta":      cape_etiqueta,
@@ -937,6 +974,8 @@ def _forecast_vacio():
         "viento_actual":    0.0,
         "viento_max":       0.0,
         "hora_viento_max":  0,
+        "rafaga_max":       None,
+        "hora_rafaga_max":  None,
         "cape_max":         0,
         "hora_cape_max":    0,
         "cape_etiqueta":      None,
