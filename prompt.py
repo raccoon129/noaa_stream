@@ -1,6 +1,10 @@
-# rev 17.4.0
-# rev anterior: rev 17.3.0
+# rev 17.5.0
+# rev anterior: rev 17.4.0
 # Changelog:
+#   17.5.0 — _bloque_sismo(): usa describir_usgs_para_prompt() para incluir
+#            indicadores extendidos de USGS (intensidad instrumental ShakeMap MMI,
+#            semáforo de impacto PAGER y reportes ciudadanos DYFI/CDI) cuando
+#            estén disponibles.
 #   17.4.0 — Ajustes derivados de evaluar 30 días de historial CONAGUA vs OWM:
 #            · _bloque_conagua(): ya no afirma "sin precipitación" cuando prob_lluvia=0
 #              (en 12 de 17 días con lluvia observada el pronóstico de "hoy" marcó 0 %).
@@ -564,10 +568,8 @@ def _bloque_sismo(contexto_sismo: Optional[dict]) -> str:
     # Datos enriquecidos de APIs internacionales — con descripción de la fuente para contexto del modelo
     extras = []
     if contexto_sismo.get("usgs_magnitud"):
-        extras.append(
-            f"USGS (Servicio Geológico de los Estados Unidos, principal agencia geofísica de referencia mundial) "
-            f"reporta magnitud {contexto_sismo['usgs_magnitud']}"
-        )
+        from sismo_apis import describir_usgs_para_prompt
+        extras.append(describir_usgs_para_prompt(contexto_sismo))
     if contexto_sismo.get("emsc_magnitud"):
         extras.append(
             f"EMSC (Centro Sismológico Euro-Mediterráneo, red de monitoreo sismológico en tiempo real de Europa) "
@@ -939,7 +941,9 @@ def construir_prompt(cna, owm, aqi, forecast=None, contexto_sismo=None,
         "significa que el SSN registró un sismo en el estado de Hidalgo "
         "que es relevante. Menciónalo de forma INFORMATIVA al inicio del reporte. "
         "Usa los datos que aparecen en la FUENTE 6: magnitud, hora (en formato natural), ubicación referencial y "
-        "profundidad en kilómetros. Debe extenderse la información disponible sin generar ambigüedad.\n\n"
+        "profundidad en kilómetros. Debe extenderse la información disponible sin generar ambigüedad. "
+        "Si la FUENTE 6 NO aparece en este prompt, NO menciones ningún sismo, temblor ni actividad sísmica "
+        "bajo ninguna circunstancia, y NUNCA inventes magnitudes, horas, ubicaciones ni profundidades.\n\n"
 
         "19. Polvo (FUENTE 3): si aparece la línea 'Polvo en suspensión', intégrala al final del párrafo de calidad del aire en lenguaje natural. "
         "Si el porcentaje >30% enfatízalo; si ≤15% mención breve y sin alarmar. Si la línea no aparece, no menciones polvo.\n\n"

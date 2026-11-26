@@ -1,7 +1,10 @@
 # sismo_flujo.py — Orquestación del flujo sísmico (alerta + enriquecimiento)
-# rev 15.3.1
-# rev anterior: rev 15.3.0
+# rev 15.4.0
+# rev anterior: rev 15.3.1
 # Changelog:
+#   15.4.0 — _consultar_todas_las_apis() pasa lat_ref/lon_ref a consultar_usgs()
+#            y almacena usgs_alert, usgs_mmi, usgs_cdi, usgs_felt y usgs_sig en
+#            estado.datos_sismo y en datos_investigacion (BD).
 #   15.3.1 — Llamadas a bd.guardar_condicion_especial() actualizadas: datos_sassla →
 #            datos_fuente_primaria, datos_ssn → datos_fuente_secundaria; se agrega
 #            fuente_alerta="SASSLA". usgs_tsunami incluido en datos_investigacion
@@ -207,9 +210,14 @@ def flujo_alerta_sismica():
             "datos_fuente_secundaria": datos_ssn_snap,
             "datos_investigacion":    json.dumps({
                 "usgs_magnitud": estado.datos_sismo.get("usgs_magnitud"),
+                "usgs_tsunami":  estado.datos_sismo.get("usgs_tsunami"),
+                "usgs_alert":    estado.datos_sismo.get("usgs_alert"),
+                "usgs_mmi":      estado.datos_sismo.get("usgs_mmi"),
+                "usgs_cdi":      estado.datos_sismo.get("usgs_cdi"),
+                "usgs_felt":     estado.datos_sismo.get("usgs_felt"),
+                "usgs_sig":      estado.datos_sismo.get("usgs_sig"),
                 "emsc_magnitud": estado.datos_sismo.get("emsc_magnitud"),
                 "gfz_magnitud":  estado.datos_sismo.get("gfz_magnitud"),
-                "usgs_tsunami":  estado.datos_sismo.get("usgs_tsunami"),
                 "replicas":      estado.datos_sismo.get("replicas_detectadas", 0)
             }),
             "guion_inmediato":        texto_guion,
@@ -274,9 +282,14 @@ def enriquecer_con_apis():
             # Investigación = APIs internacionales consolidadas
             "datos_investigacion":     json.dumps({
                 "usgs_magnitud": estado.datos_sismo.get("usgs_magnitud"),
+                "usgs_tsunami":  estado.datos_sismo.get("usgs_tsunami"),
+                "usgs_alert":    estado.datos_sismo.get("usgs_alert"),
+                "usgs_mmi":      estado.datos_sismo.get("usgs_mmi"),
+                "usgs_cdi":      estado.datos_sismo.get("usgs_cdi"),
+                "usgs_felt":     estado.datos_sismo.get("usgs_felt"),
+                "usgs_sig":      estado.datos_sismo.get("usgs_sig"),
                 "emsc_magnitud": estado.datos_sismo.get("emsc_magnitud"),
                 "gfz_magnitud":  estado.datos_sismo.get("gfz_magnitud"),
-                "usgs_tsunami":  estado.datos_sismo.get("usgs_tsunami"),
                 "replicas":      estado.datos_sismo.get("replicas_detectadas", 0)
             }),
         }
@@ -345,21 +358,34 @@ def _consultar_todas_las_apis():
     lat = datos.get("ssn_latitud")
     lon = datos.get("ssn_longitud")
 
-    # USGS
-    usgs = consultar_usgs(hora_str) or {}
+    # USGS (con lat_ref/lon_ref si el SSN ya las dio para evitar otro evento;
+    # si el SSN está caído, lat/lon son None y busca en todo México por hora UTC)
+    usgs = consultar_usgs(hora_str, lat_ref=lat, lon_ref=lon) or {}
     if usgs.get("magnitud"):
         datos["usgs_magnitud"] = usgs["magnitud"]
         datos["usgs_tsunami"]  = usgs.get("tsunami")
+        datos["usgs_alert"]    = usgs.get("alert")
+        datos["usgs_mmi"]      = usgs.get("mmi")
+        datos["usgs_cdi"]      = usgs.get("cdi")
+        datos["usgs_felt"]     = usgs.get("felt")
+        datos["usgs_sig"]      = usgs.get("sig")
         if usgs.get("ubicacion") and not datos.get("epicentro"):
             datos["epicentro"] = usgs["ubicacion"]
-        # Resiliencia: si el SSN está caído, adoptamos las coordenadas de USGS
+        # Resiliencia: si el SSN está caído, adoptamos las coordenadas y profundidad de USGS
         if usgs.get("latitud") is not None and datos.get("ssn_latitud") is None:
             datos["ssn_latitud"] = usgs["latitud"]
         if usgs.get("longitud") is not None and datos.get("ssn_longitud") is None:
             datos["ssn_longitud"] = usgs["longitud"]
         if usgs.get("profundidad_km") is not None and datos.get("ssn_profundidad_km") is None:
             datos["ssn_profundidad_km"] = usgs["profundidad_km"]
-        print(f"[SISMO] - {estado.ts()} ℹ️ USGS: M{usgs['magnitud']}")
+        detalles_log = [f"M{usgs['magnitud']}"]
+        if usgs.get("mmi") is not None:
+            detalles_log.append(f"MMI {usgs['mmi']}")
+        if usgs.get("alert"):
+            detalles_log.append(f"PAGER {usgs['alert']}")
+        if usgs.get("felt"):
+            detalles_log.append(f"felt={usgs['felt']}")
+        print(f"[SISMO] - {estado.ts()} ℹ️ USGS: {' | '.join(detalles_log)}")
 
     # Volver a leer coordenadas para que EMSC y GFZ aprovechen las de USGS si el SSN falló
     lat = datos.get("ssn_latitud")

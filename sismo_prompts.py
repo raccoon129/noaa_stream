@@ -2,6 +2,7 @@
 
 import time
 import config
+from sismo_apis import describir_usgs_para_prompt
 from sismo_regex import CIUDADES_SASSLA
 
 
@@ -40,10 +41,7 @@ def construir_prompt_sismo_inmediato(datos):
 
     # Datos de APIs internacionales (si ya los tenemos) — con descripción de la fuente
     if datos.get("usgs_magnitud"):
-        contexto.append(
-            f"USGS (Servicio Geológico de los Estados Unidos, principal agencia geofísica de referencia mundial) "
-            f"reporta magnitud {datos['usgs_magnitud']}"
-        )
+        contexto.append(describir_usgs_para_prompt(datos))
     if datos.get("usgs_tsunami") == 1:
         contexto.append("USGS ha emitido alerta de tsunami para este evento")
     if datos.get("emsc_magnitud"):

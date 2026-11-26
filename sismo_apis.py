@@ -1,6 +1,13 @@
-# sismo_apis.py — Consultas a APIs sismológicas (SSN, USGS, EMSC, IRIS)
-# rev 15.3.2
+# sismo_apis.py — Consultas a APIs sismológicas (SSN, USGS, EMSC, GFZ)
+# rev 15.4.0
 # Changelog:
+#   15.4.0 — Corrección de huso horario (UTC-6 → UTC) en consultar_usgs(),
+#            consultar_emsc() y consultar_gfz(). Ventana acotada con
+#            SISMO_VENTANA_ANTES_MIN / SISMO_VENTANA_DESPUES_MIN y filtro
+#            geográfico (SISMO_RADIO_COINCIDENCIA_KM) cuando hay coordenadas SSN.
+#            Extracción de campos extendidos USGS: alert (PAGER), mmi (ShakeMap),
+#            cdi y felt (DYFI), sig, y redondeo de magnitud/profundidad a 1 decimal.
+#            describir_usgs_para_prompt() formatea estos indicadores en español.
 #   15.3.2 — consultar_ssn_xml() reescrito:
 #            - 3 reintentos con 3 s de espera (SSN se satura con frecuencia).
 #            - Coordenadas obtenidas de <geo:lat>/<geo:long> (más fiables que la URL).
@@ -254,12 +261,105 @@ def buscar_replicas_ssn(hora_evento, min_mag=3.5):
     return replicas
 
 
-def consultar_usgs(hora_str):
+def _hora_local_a_utc(hora_str: str) -> datetime.datetime:
+    """
+    Convierte una marca de tiempo en hora local del centro de México (UTC-6,
+    formato '%Y-%m-%d %H:%M:%S' usado por SSN y SASSLA) a datetime en UTC
+    para consultar agencias internacionales FDSNWS (USGS, EMSC, GFZ).
+    """
+    dt_local = datetime.datetime.strptime(hora_str, "%Y-%m-%d %H:%M:%S")
+    return dt_local + datetime.timedelta(hours=6)
+
+
+_PAGER_ALERTA_ES = {
+    "green":  "verde (sin probabilidad de daños estructurales ni víctimas estimadas)",
+    "yellow": "amarillo (posibles daños locales menores; alerta regional baja)",
+    "orange": "naranja (daños significativos probables a nivel regional)",
+    "red":    "rojo (alerta máxima por probables daños severos e impacto humano)",
+}
+
+
+def _etiqueta_mercalli_es(valor: float) -> str:
+    """Traduce un valor numérico de escala Mercalli Modificada (MMI/CDI) a etiqueta en español."""
+    if valor < 2.0:
+        return "imperceptible"
+    elif valor < 3.5:
+        return "débil"
+    elif valor < 4.5:
+        return "ligera"
+    elif valor < 5.5:
+        return "moderada"
+    elif valor < 6.5:
+        return "fuerte"
+    elif valor < 7.5:
+        return "muy fuerte"
+    elif valor < 8.5:
+        return "severa"
+    return "violenta a extrema"
+
+
+def describir_usgs_para_prompt(datos: dict) -> str:
+    """
+    Construye la línea descriptiva de USGS para los prompts (inmediato y clima),
+    integrando magnitud e indicadores adicionales (ShakeMap MMI, PAGER alert,
+    reportes ciudadanos DYFI/CDI) cuando estén disponibles.
+    Retorna cadena vacía si no hay usgs_magnitud.
+    """
+    mag = datos.get("usgs_magnitud")
+    if not mag:
+        return ""
+
+    partes = [
+        f"USGS (Servicio Geológico de los Estados Unidos, principal agencia geofísica de referencia mundial) "
+        f"reporta magnitud {mag}"
+    ]
+
+    mmi = datos.get("usgs_mmi")
+    if mmi is not None:
+        try:
+            mmi_val = float(mmi)
+            partes.append(
+                f"intensidad instrumental en superficie {_etiqueta_mercalli_es(mmi_val)} "
+                f"(nivel {mmi_val:.1f} en la escala Mercalli de ShakeMap)"
+            )
+        except (ValueError, TypeError):
+            pass
+
+    alert = datos.get("usgs_alert")
+    if alert and str(alert).lower() in _PAGER_ALERTA_ES:
+        desc_alerta = _PAGER_ALERTA_ES[str(alert).lower()]
+        partes.append(f"nivel de alerta PAGER en color {desc_alerta}")
+
+    felt = datos.get("usgs_felt")
+    cdi  = datos.get("usgs_cdi")
+    if felt is not None:
+        try:
+            felt_num = int(felt)
+            if felt_num > 0:
+                if cdi is not None:
+                    try:
+                        cdi_val = float(cdi)
+                        partes.append(
+                            f"{felt_num} reportes ciudadanos de percepción recibidos "
+                            f"(intensidad percibida {_etiqueta_mercalli_es(cdi_val)}, nivel {cdi_val:.1f})"
+                        )
+                    except (ValueError, TypeError):
+                        partes.append(f"{felt_num} reportes ciudadanos de percepción recibidos")
+                else:
+                    partes.append(f"{felt_num} reportes ciudadanos de percepción recibidos")
+        except (ValueError, TypeError):
+            pass
+
+    if len(partes) == 1:
+        return partes[0]
+    return partes[0] + ", con " + "; ".join(partes[1:])
+
+
+def consultar_usgs(hora_str, lat_ref=None, lon_ref=None):
     try:
-        dt    = datetime.datetime.strptime(hora_str, "%Y-%m-%d %H:%M:%S")
-        start = (dt - datetime.timedelta(minutes=5)).strftime("%Y-%m-%dT%H:%M:%S")
-        # Ventana de 90 min: USGS tiene latencia alta para México (no es región prioritaria)
-        end   = (dt + datetime.timedelta(minutes=90)).strftime("%Y-%m-%dT%H:%M:%S")
+        dt_utc = _hora_local_a_utc(hora_str)
+        start  = (dt_utc - datetime.timedelta(minutes=config.SISMO_VENTANA_ANTES_MIN)).strftime("%Y-%m-%dT%H:%M:%S")
+        end    = (dt_utc + datetime.timedelta(minutes=config.SISMO_VENTANA_DESPUES_MIN)).strftime("%Y-%m-%dT%H:%M:%S")
         url = (
             f"https://earthquake.usgs.gov/fdsnws/event/1/query?format=geojson"
             f"&starttime={start}&endtime={end}&minmagnitude={config.SISMO_MIN_MAG}"
@@ -270,17 +370,64 @@ def consultar_usgs(hora_str):
         r = requests.get(url, timeout=15)
         if r.status_code == 200:
             data = r.json()
-            if data.get("features"):
-                f = data["features"][0]
-                coords = f["geometry"].get("coordinates", [])
-                return {
-                    "magnitud":       f["properties"].get("mag"),
-                    "ubicacion":      f["properties"].get("place"),
-                    "tsunami":        f["properties"].get("tsunami"),
-                    "profundidad_km": coords[2] if len(coords) > 2 else None,
-                    "latitud":        coords[1] if len(coords) > 1 else None,
-                    "longitud":       coords[0] if len(coords) > 0 else None,
-                }
+            features = data.get("features") or []
+            if not features:
+                return None
+
+            mejor_f = None
+            mejor_score = float("inf")
+            for f in features:
+                p = f.get("properties", {})
+                coords = f.get("geometry", {}).get("coordinates", [])
+                f_lon = coords[0] if len(coords) > 0 else None
+                f_lat = coords[1] if len(coords) > 1 else None
+
+                # Si ya tenemos coordenadas de referencia (SSN), filtrar por distancia
+                dist_km = 0.0
+                if lat_ref is not None and lon_ref is not None and f_lat is not None and f_lon is not None:
+                    dist_km = (((f_lat - lat_ref) ** 2 + (f_lon - lon_ref) ** 2) ** 0.5) * 111.0
+                    if dist_km > config.SISMO_RADIO_COINCIDENCIA_KM:
+                        continue
+
+                # Diferencia temporal respecto a dt_utc en minutos
+                t_ms = p.get("time")
+                if t_ms is not None:
+                    dt_ev_utc = datetime.datetime.fromtimestamp(
+                        t_ms / 1000.0, tz=datetime.timezone.utc
+                    ).replace(tzinfo=None)
+                    diff_min = abs((dt_ev_utc - dt_utc).total_seconds()) / 60.0
+                else:
+                    diff_min = 0.0
+
+                score = diff_min + (dist_km / 10.0)
+                if score < mejor_score:
+                    mejor_score = score
+                    mejor_f = f
+
+            if mejor_f is None:
+                return None
+
+            p = mejor_f.get("properties", {})
+            coords = mejor_f.get("geometry", {}).get("coordinates", [])
+            mag_raw  = p.get("mag")
+            mmi_raw  = p.get("mmi")
+            cdi_raw  = p.get("cdi")
+            felt_raw = p.get("felt")
+            prof_raw = coords[2] if len(coords) > 2 else None
+
+            return {
+                "magnitud":       round(float(mag_raw), 1)  if mag_raw  is not None else None,
+                "ubicacion":      p.get("place"),
+                "tsunami":        p.get("tsunami"),
+                "profundidad_km": round(float(prof_raw), 1) if prof_raw is not None else None,
+                "latitud":        coords[1] if len(coords) > 1 else None,
+                "longitud":       coords[0] if len(coords) > 0 else None,
+                "alert":          p.get("alert"),
+                "mmi":            round(float(mmi_raw), 1)  if mmi_raw  is not None else None,
+                "cdi":            round(float(cdi_raw), 1)  if cdi_raw  is not None else None,
+                "felt":           int(felt_raw)             if felt_raw is not None else None,
+                "sig":            p.get("sig"),
+            }
     except Exception as e:
         print(f"[SISMO] ⚠️ Error USGS: {e}")
     return None
@@ -290,17 +437,19 @@ def consultar_emsc(hora_str, lat, lon):
     if lat is None or lon is None:
         return None
     try:
-        dt    = datetime.datetime.strptime(hora_str, "%Y-%m-%d %H:%M:%S")
-        start = (dt - datetime.timedelta(minutes=5)).strftime("%Y-%m-%dT%H:%M:%S")
+        dt_utc = _hora_local_a_utc(hora_str)
+        start  = (dt_utc - datetime.timedelta(minutes=config.SISMO_VENTANA_ANTES_MIN)).strftime("%Y-%m-%dT%H:%M:%S")
+        end    = (dt_utc + datetime.timedelta(minutes=config.SISMO_VENTANA_DESPUES_MIN)).strftime("%Y-%m-%dT%H:%M:%S")
         url = (
             f"https://www.seismicportal.eu/fdsnws/event/1/query?format=json"
-            f"&starttime={start}&minmag={config.SISMO_MIN_MAG}&lat={lat}&lon={lon}&maxradius=3"
+            f"&starttime={start}&endtime={end}&minmag={config.SISMO_MIN_MAG}&lat={lat}&lon={lon}&maxradius=3"
         )
         r = requests.get(url, timeout=10)
         if r.status_code == 200:
             data = r.json()
             if data.get("features"):
-                return {"magnitud": data["features"][0]["properties"].get("mag")}
+                mag_raw = data["features"][0]["properties"].get("mag")
+                return {"magnitud": round(float(mag_raw), 1) if mag_raw is not None else None}
     except Exception as e:
         print(f"[SISMO] ⚠️ Error EMSC: {e}")
     return None
@@ -316,11 +465,12 @@ def consultar_gfz(hora_str, lat, lon):
     if lat is None or lon is None:
         return None
     try:
-        dt    = datetime.datetime.strptime(hora_str, "%Y-%m-%d %H:%M:%S")
-        start = (dt - datetime.timedelta(minutes=5)).strftime("%Y-%m-%dT%H:%M:%S")
+        dt_utc = _hora_local_a_utc(hora_str)
+        start  = (dt_utc - datetime.timedelta(minutes=config.SISMO_VENTANA_ANTES_MIN)).strftime("%Y-%m-%dT%H:%M:%S")
+        end    = (dt_utc + datetime.timedelta(minutes=config.SISMO_VENTANA_DESPUES_MIN)).strftime("%Y-%m-%dT%H:%M:%S")
         url = (
             f"https://geofon.gfz-potsdam.de/fdsnws/event/1/query?format=text"
-            f"&starttime={start}&minmagnitude={config.SISMO_MIN_MAG}"
+            f"&starttime={start}&endtime={end}&minmagnitude={config.SISMO_MIN_MAG}"
             f"&latitude={lat}&longitude={lon}&maxradius=3"
         )
         r = requests.get(url, timeout=12)
@@ -332,7 +482,7 @@ def consultar_gfz(hora_str, lat, lon):
                 partes = lineas[1].split("|")
                 if len(partes) > 10:
                     try:
-                        return {"magnitud": float(partes[10])}
+                        return {"magnitud": round(float(partes[10]), 1)}
                     except (ValueError, IndexError):
                         pass
         elif r.status_code == 204:
